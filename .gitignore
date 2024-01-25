@@ -1,4 +1,13 @@
-.Rproj.user
-.Rhistory
-.RData
-.Ruserdata
+# Ignore all files
+*
+
+# Except .py and .R files
+!*.py
+!*.R
+!*.gitignore
+
+# Unignore directories
+!*/
+
+# Ignore all files in subdirectories
+!//
