@@ -1,0 +1,266 @@
+---
+title: "Deconvolution_2024"
+author: "Yayuan Zhu"
+date: "2024-01-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The following code is adapted from <https://github.com/gemmabb/DeconvolutionAtheroscleroticPlaques/tree/main>.
+
+## Data processing
+
+### Setup
+
+```{r message=FALSE, warning=FALSE}
+library(magrittr) #2.0.3
+library(tidyverse) #2.0.0
+library(Seurat) #5.0.1
+library(Biobase) #2.60.0
+library(rstudioapi) #0.15.0
+
+setwd(dirname(getActiveDocumentContext()$path)) #set wd to the directory of this code file
+#source("helperFunctions/functions_CreatingDifferentDataInputs.R")
+```
+
+### Bulk RNA-sequencing (RNA-seq) data
+
+#### Importing files
+
+The HGNC complete set has been downloaded on 16/01/2024 from <https://ftp.ebi.ac.uk/pub/databases/genenames/hgnc/archive/monthly/tsv/hgnc_complete_set_2024-01-01.txt>. The list of non-coding RNA is obtained from <https://www.genenames.org/tools/search/#!/?query=&rows=20&start=0&filter=locus_group:%22Non-coding%20RNA%22>, which is filtered by the non-coding RNA. The file used below has been downloaded on 16/01/2024.
+
+```{r message=FALSE, warning=FALSE}
+bulkData <- read_delim("input/AE_bulk_RNA_batch1.minRib.PC_07042023.txt")
+
+completeHGNC <- read_delim("input/hgnc_complete_set.txt")
+
+ncRNA <- read_delim("input/HGNC_NonCodingRNA.txt")
+```
+
+#### Preparing data
+
+First, gene symbols will be added to the dataset from the HGNC complete archive. Consequently, genes will be removed of which the Ensembl gene ID is not found in this archive and are non-coding RNA.
+
+```{r}
+bulkFilter <- bulkData %>% 
+  filter(gene %in% completeHGNC$ensembl_gene_id) %>%
+  rename("ensembl_gene_id"="gene") %>%
+  left_join(select(completeHGNC, ensembl_gene_id, symbol), by = "ensembl_gene_id") %>%
+  select(ensembl_gene_id, symbol, everything()) %>%
+  filter(!(symbol %in% ncRNA$Symbol))
+```
+
+The bulk RNA-seq dataset has been reduced from 21835 to 19214 genes. In the section below ("Filter genes"), it will be further reduced as to gain a set of genes that is present in both the bulk RNA-seq and the scRNA-seq dataset.
+
+### Single cell RNA-sequencing (scRNA-seq) data
+
+#### Importing files
+
+From the file, the PBMC data is removed leaving only the data pertaining the atherosclerotic plaques.
+
+```{r}
+scData <- subset(read_rds("input/full.43p_10X.integrated.cleaned.archetypes.seurat.RDS"), Tissue != "PBMC")
+```
+
+#### ~~Quality control data~~
+
+~~In order to be able to create plots without the lengthy cell type names posing a problem, cell types are renamed based on their corresponding index.~~
+
+```{r}
+# numLevels <- as.character(1:25)
+# 
+# names(numLevels) <- levels(scPlaque)
+# 
+# scRename <- RenameIdents(scPlaque, numLevels) 
+# levels(scPlaque)
+```
+
+~~The commonly used quality control metrics will be used to filter the cells:~~
+
+-   ~~unique feature counts of cells (`nFeature_RNA`) \< 200 or 2500 \>.~~
+
+-   ~~mitochondrial counts of cells (`percent.mt`) of 5%~~
+
+```{r}
+# VlnPlot(scRename, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+# scFilter <- subset(scPlaque, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+```
+
+#### Filter genes
+
+As the total number of genes in the scRNA-seq dataset (24691 genes) differs from the total in the bulk RNA-seq dataset (19214 genes), it is necessary to ensure that both datasets contain the same set of genes. It enables robust comparisons between the datasets.
+
+Before that, the scRNA-seq dataset will be checked for genes that are not present in the HGNC archive.
+
+```{r}
+sum(!(Features(scData) %in% completeHGNC$symbol))
+
+sum(setdiff(Features(scData), completeHGNC$symbol) %in% bulkFilter$symbol)
+```
+
+4122 genes in the scRNA-seq dataset are not present in the HGNC archive. However, these genes are also not present in the bulk RNA-seq dataset. Therefore, we don't need to filter these genes out in this step.
+
+Now, genes are removed from the scRNA-seq dataset that are directly not found in the bulk RNA-seq dataset.
+
+```{r}
+DefaultAssay(scData) <- "RNA"
+
+toKeep <- intersect(Features(scData), bulkFilter$symbol)
+
+bulkFinal <- bulkFilter %>%
+  filter(symbol %in% toKeep)
+
+counts <- scData[["RNA"]]$counts
+
+countsKeep <- counts[which(rownames(counts) %in% toKeep),]
+
+scFilter <- subset(scData, features = rownames(countsKeep))
+```
+
+This leaves us with two datasets both containing 18114 genes.
+
+Below, we check the relationship between the total counts and the number of expressed genes in the individual cells.
+
+```{r warning=FALSE}
+matCounts <- as.matrix(counts)
+
+totalCounts <- colSums(matCounts)
+exprGenes <- colSums(matCounts > 0)
+
+plot(totalCounts, exprGenes); title("Overall transcriptomic activity")
+```
+
+In the scRNA-seq dataset, there were 25 cell types identified. However, the frequency of these cell types found in the dataset vary largely. To ensure reliability and accuracy of the dataset, the cell types with a frequency below an arbitrary threshold will be removed.
+
+```{r}
+dfCellTypesRename <- as.data.frame(sort(table(Idents(scFilter)))) %>%
+  rename(cellType = Var1) %>%
+  mutate(cellType = recode(cellType,
+                           "CD14+TREM2-TIMP1+HSPA6+ Lipid-stress Activated Foamy Macrophages" = "Lipid-stress Foamy Macrophages", 
+                           "CD14+IL1B+SELL+MX1+ Interferon Activated Inflammatory Monocyte-derived Macrophages" = "Interferon Activated Inflammatory Monocyte-derived Macrophages",
+                           "CD14+TREM2-OLR1+NLRP3+ Inflammatory Foamy Macrophages" = "Inflammatory Foamy Macrophages",
+                           "CD14+IL1B+SELL+CD16- Antigen-presenting Inflammatory Monocyte-derived Macrophages" = "Antigen-presenting Inflammatory Monocyte-derived Macrophages",
+                           "CD14+-IL1B+SELL+CD16+ Migrating Inflammatory Monocyte-derived Macrophages" = "Migrating Inflammatory Monocyte-derived Macrophages",
+                           "CD14+TNF+TREM2+FOLR2+ Inflammatory Resident-like Lipid Associated Macrophages" = "Inflammatory Resident-like Lipid Associated Macrophages",
+                           "CD14+IL1B+SELL+S100A8+ Migrating Inflammatory Monocyte-derived Macrophages" = "S100A8+ Migrating Inflammatory Monocyte-derived Macrophages"))
+
+threshold <- 50
+
+par(mar = c(20, 6, 4, 2))
+
+ggplot(dfCellTypesRename, aes(x = cellType, y = Freq)) +
+  geom_bar(stat = "identity",
+           aes(fill = Freq >= threshold)) +
+  geom_hline(aes(yintercept = threshold,
+                 color = "threshold")) +
+  scale_color_manual(name = "",
+                     values = c("threshold" = "#E66100")) +
+  scale_fill_manual(guide = "none",
+                    values = c("#5D3A9B", "darkgrey")) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8)) +
+  coord_cartesian(ylim = c(0, 750))
+```
+
+The plot above, but in a shiny application:
+
+```{r}
+knitr::include_url("https://yyzo.shinyapps.io/Frequence_sequenced_cell_type/",
+                   height = "630px")
+```
+
+From the plots above and the previous work of Gemma, it has been decided to keep cell types which have a frequency of 50 and higher.
+
+```{r}
+dfCellTypes <- as.data.frame(sort(table(Idents(scFilter)))) %>%
+  rename(cellType = Var1) %>%
+  mutate(cellType = as.character(cellType))
+
+aboveThreshold <- factor(dfCellTypes$cellType[dfCellTypes$Freq >= 50])
+
+scFinal <- subset(scFilter, idents = aboveThreshold)
+
+length(Cells(scFilter))
+length(Cells(scFinal))
+
+unique(Idents(scFilter))
+unique(Idents(scFinal))
+
+dim(scFinal)
+```
+
+T
+
+.....
+
+```{r}
+#### 18 cell types ####
+pheno_scReadCounts_rmvCellTypes$cellType <- 
+  factor(pheno_scReadCounts_rmvCellTypes$cellType, levels = unique(pheno_scReadCounts_rmvCellTypes$cellType))#cell types
+
+#### 9 cell types ####
+clustering <- list()
+clustering["FOXP3+ T Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "FOXP3+"))
+clustering["CD3+ T Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "CD3+.*T"))
+clustering["NK Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "NK Cells"))
+clustering["Switched mem B Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Class-switched"))
+clustering["CD68+ (Foam Cells and inflam/resident macrophages)"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Inflam|Foam|Resident"))
+clustering["CD68+ Dendritic"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Dendritic"))
+clustering["Endothelial Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "CD34+"))
+clustering["Smooth Muscle Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "ACTA2+"))
+clustering["CD68+ Mast Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Mast"))
+
+unlist(unname(clustering)) #we still have 18 sub cell types (sanity check)
+
+clType <- as.character(pheno_scReadCounts_rmvCellTypes$cellType)
+for(i in 1:length(clustering)){
+  clType[clType %in% unname(unlist(clustering[i]))] <- names(clustering[i])
+}
+pheno_scReadCounts_rmvCellTypes$clusterType_9 <- factor(clType, levels = names(clustering))
+
+#### 6 cell types ####
+clustering <- list()
+clustering["T and NK Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "(?:T|NK) Cells"))
+clustering["Switched mem B Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Class-switched"))
+clustering["CD68+ Cells (no mast)"] <- list(str_subset(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Mast", negate = T), "CD68+"))
+clustering["Endothelial Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "CD34+"))
+clustering["Smooth Muscle Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "ACTA2+"))
+clustering["Mast Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Mast"))
+
+unlist(unname(clustering)) #we still have 18 sub cell types (sanity check)
+
+clType <- as.character(pheno_scReadCounts_rmvCellTypes$cellType)
+for(i in 1:length(clustering)){
+  clType[clType %in% unname(unlist(clustering[i]))] <- names(clustering[i])
+}
+pheno_scReadCounts_rmvCellTypes$clusterType_6 <- factor(clType, levels = names(clustering))
+```
+
+UMAP:
+
+```{r}
+# numLevels <- as.character(1:25)
+# 
+# names(numLevels) <- levels(scFinal)
+# 
+# scRename <- RenameIdents(scFinal, numLevels)
+# levels(scFinal)
+# 
+# DimPlot(scFinal,
+#         reduction = "umap",
+#         label = TRUE,
+#         label.size = 1.5,
+#         repel = TRUE)
+```
+
+### Session info
+
+```{r}
+sessioninfo()
+```
