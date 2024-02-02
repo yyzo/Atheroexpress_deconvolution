@@ -11,22 +11,21 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Introduction
 
-The following code is adapted from <https://github.com/gemmabb/DeconvolutionAtheroscleroticPlaques/tree/main>.
-
-## Data processing
+...
 
 ### Setup
 
 ```{r message=FALSE, warning=FALSE}
-library(magrittr) #2.0.3
-library(tidyverse) #2.0.0
-library(Seurat) #5.0.1
-library(Biobase) #2.60.0
-library(rstudioapi) #0.15.0
+library(magrittr)
+library(tidyverse)
+library(Seurat)
+library(Biobase)
+library(rstudioapi)
 
-setwd(dirname(getActiveDocumentContext()$path)) #set wd to the directory of this code file
-#source("helperFunctions/functions_CreatingDifferentDataInputs.R")
+setwd(dirname(getActiveDocumentContext()$path))
 ```
+
+## Data processing
 
 ### Bulk RNA-sequencing (RNA-seq) data
 
@@ -186,81 +185,76 @@ aboveThreshold <- factor(dfCellTypes$cellType[dfCellTypes$Freq >= 50])
 
 scFinal <- subset(scFilter, idents = aboveThreshold)
 
-length(Cells(scFilter))
-length(Cells(scFinal))
-
-unique(Idents(scFilter))
-unique(Idents(scFinal))
-
-dim(scFinal)
+# length(Cells(scFilter))
+# length(Cells(scFinal))
+# 
+# unique(Idents(scFilter))
+# unique(Idents(scFinal))
+# 
+# dim(scFinal)
 ```
 
-T
-
-.....
-
-```{r}
-#### 18 cell types ####
-pheno_scReadCounts_rmvCellTypes$cellType <- 
-  factor(pheno_scReadCounts_rmvCellTypes$cellType, levels = unique(pheno_scReadCounts_rmvCellTypes$cellType))#cell types
-
-#### 9 cell types ####
-clustering <- list()
-clustering["FOXP3+ T Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "FOXP3+"))
-clustering["CD3+ T Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "CD3+.*T"))
-clustering["NK Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "NK Cells"))
-clustering["Switched mem B Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Class-switched"))
-clustering["CD68+ (Foam Cells and inflam/resident macrophages)"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Inflam|Foam|Resident"))
-clustering["CD68+ Dendritic"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Dendritic"))
-clustering["Endothelial Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "CD34+"))
-clustering["Smooth Muscle Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "ACTA2+"))
-clustering["CD68+ Mast Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Mast"))
-
-unlist(unname(clustering)) #we still have 18 sub cell types (sanity check)
-
-clType <- as.character(pheno_scReadCounts_rmvCellTypes$cellType)
-for(i in 1:length(clustering)){
-  clType[clType %in% unname(unlist(clustering[i]))] <- names(clustering[i])
-}
-pheno_scReadCounts_rmvCellTypes$clusterType_9 <- factor(clType, levels = names(clustering))
-
-#### 6 cell types ####
-clustering <- list()
-clustering["T and NK Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "(?:T|NK) Cells"))
-clustering["Switched mem B Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Class-switched"))
-clustering["CD68+ Cells (no mast)"] <- list(str_subset(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Mast", negate = T), "CD68+"))
-clustering["Endothelial Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "CD34+"))
-clustering["Smooth Muscle Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "ACTA2+"))
-clustering["Mast Cells"] <- list(str_subset(levels(pheno_scReadCounts_rmvCellTypes$cellType), "Mast"))
-
-unlist(unname(clustering)) #we still have 18 sub cell types (sanity check)
-
-clType <- as.character(pheno_scReadCounts_rmvCellTypes$cellType)
-for(i in 1:length(clustering)){
-  clType[clType %in% unname(unlist(clustering[i]))] <- names(clustering[i])
-}
-pheno_scReadCounts_rmvCellTypes$clusterType_6 <- factor(clType, levels = names(clustering))
+```{r include=FALSE}
+#Remove redundant Seurat objects in order to free up space.
+rm(scData, scFilter, bulkData, bulkFilter)
+gc()
 ```
 
-UMAP:
+The final scRNA-sequencing dataset contains 21 cell types. How these cell types are clustered can be seen in the UMAP plot below.
 
 ```{r}
-# numLevels <- as.character(1:25)
-# 
-# names(numLevels) <- levels(scFinal)
-# 
-# scRename <- RenameIdents(scFinal, numLevels)
-# levels(scFinal)
-# 
-# DimPlot(scFinal,
-#         reduction = "umap",
-#         label = TRUE,
-#         label.size = 1.5,
-#         repel = TRUE)
+numLevels <- as.character(1:21)
+
+names(numLevels) <- levels(scFinal)
+
+scRename <- RenameIdents(scFinal, numLevels)
+levels(scFinal)
+
+DimPlot(scRename,
+        reduction = "umap",
+        label = TRUE,
+        label.size = 1.5,
+        repel = TRUE)
+```
+
+In order to assess whether clustering of certain cell types would reduce the complexity of the deconvolution, the 21 cell types will be reduced to ...
+
+## Format files for Scaden
+
+For the deconvolution method "Scaden", the input files need to be correctly formatted. For detailed instructions, see the [Scaden documentation page](https://scaden.readthedocs.io/en/latest/index.html).
+
+```{r}
+scadenBulk <- bulkFinal %>%
+  as.data.frame() %>%
+  column_to_rownames("symbol") %>%
+  subset(select = -ensembl_gene_id)
+
+write.table(scadenBulk,
+            file = "output/scaden_format_files/scaden_bulk_data.txt",
+            sep = "\t")
+
+scadenCellTypes <- as.data.frame(Idents(scFinal)) %>%
+  rename(Celltype = `Idents(scFinal)`)
+  
+scadenCounts <- as.data.frame(scFinal[["RNA"]]$counts) %>%
+  t()
+
+#Check if the rownames of the two data frames are in the same order.
+table(rownames(scadenCounts) == rownames(scadenCellTypes))
+
+write.table(scadenCellTypes,
+            file = "output/scaden_format_files/scaden_celltypes.txt",
+            sep = "\t", row.names = FALSE)
+
+#rownames(scadenCounts) <- seq_len(nrow(scadenCounts)) - 1
+
+write.table(scadenCounts,
+            file = "output/scaden_format_files/scadenOne_counts.txt",
+            sep = "\t", row.names = FALSE)
 ```
 
 ### Session info
 
 ```{r}
-sessioninfo()
+devtools::session_info()
 ```
