@@ -1,0 +1,189 @@
+---
+title: "Deconvolution Scaden"
+author: "Yayuan Zhu"
+date: "2024-01-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Creating pseudo bulk mixtures for training of the algorithm and performing the deconvolution.
+
+### Setup
+
+```{r}
+library(magrittr)
+library(tidyverse)
+```
+
+## Deconvolution with Scaden
+
+Testing with examples:
+
+```{r}
+exampleBulk <- read.table("example_data/example_bulk_data.txt")
+exampleCellTypes <- read.table("example_data/example_celltypes.txt")
+exampleCounts <- read.table("example_data/example_counts.txt")
+```
+
+```{bash}
+mkdir example_data
+scaden example --out example_data/
+```
+
+```{bash}
+scaden simulate --data example_data/ -n 100 --pattern "*_counts.txt"
+```
+
+```{bash}
+scaden process data.h5ad example_data/example_bulk_data.txt
+```
+
+```{bash}
+scaden train processed.h5ad --steps 5000 --model_dir model
+#roughly 10 minutes
+```
+
+```{bash}
+scaden predict --model_dir model example_data/example_bulk_data.txt
+```
+
+Own data (renamed rownames to start from 0 in order to match example_counts):
+
+```{bash}
+scaden simulate --data output/scaden_test_zero/ -n 100 --pattern "*_counts.txt" --out output/scaden_test_zero
+```
+
+```{bash}
+scaden process output/scaden_test_zero/scadenzero.h5ad output/scaden_test_zero/scadenzero_bulk_data.txt --processed_path output/scaden_test_zero/processedzero.h5ad
+```
+
+```{bash}
+scaden train output/scaden_test_zero/processedzero.h5ad --steps 5000 --model_dir modelzero
+```
+
+```{bash}
+scaden predict --model_dir modelzero output/scaden_test_zero/scadenzero_bulk_data.txt
+```
+
+## Evaluating results
+
+Importing files:
+
+```{r}
+examplePrediction <- read.table("example_predictions.txt")
+
+scadenPred <- read.delim("scaden_predictions.txt", check.names = FALSE)
+colnames(scadenPred)[1] = "Patient"
+```
+
+Making boxplot of the cell type proportions:
+
+Example:
+
+```{r}
+exPivot <- examplePrediction %>%
+  rownames_to_column("Sample") %>%
+  pivot_longer(
+             cols = -Sample,
+             names_to = "Celltype",
+             values_to = "Proportion"
+  )
+
+ggplot(exPivot, aes(x = Celltype, y = Proportion)) +
+  geom_boxplot()
+
+```
+
+Scaden:
+
+```{r}
+cellTypes <- colnames(scadenPred)[2:ncol(scadenPred)]
+
+newNames <- as.vector(c("Class-switched Memory B Cells",
+                        "Smooth Muscle Cells",
+                        "Endothelial Cells",
+                        "FOXP3+ T Cells",
+                        "CD56- NK Cells",
+                        "CD56+ NK Cells",
+                        "Proliferating T Cells",
+                        "Resident-like Macrophages",
+                        "CD4+ T Cells",
+                        "Lipid Associated Macrophages",
+                        "Inflammatory Lipid Associated Macrophages",
+                        "CD8+ T Cells",
+                        "Inflammatory Foamy Macrophages",
+                        "cDC2",
+                        "Inflammatory Monocyte-derived Macrophages",
+                        "Foamy Macrophages",
+                        "S100A8+ Migrating Monocyte-derived Macrophages",
+                        "Antigen-presenting Monocyte-derived Macrophages",
+                        "cDC1",
+                        "Mast Cells",
+                        "CD16+ Migrating Monocyte-derived Macrophages"))
+
+renamedCellTypes <- as.data.frame(cbind(cellTypes, newNames))
+
+colnames(scadenPred)[2:ncol(scadenPred)] <- newNames
+
+longScadenPred <- scadenPred %>%
+  pivot_longer(
+    cols = -Patient,
+    names_to = "Celltype",
+    values_to = "Proportion"
+  )
+
+ggplot(longScadenPred, aes(x = Celltype, y = Proportion)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8))
+```
+
+Scaden zero:
+
+```{r}
+scadenZero <- read.delim("scaden_predictions.txt", check.names = FALSE)
+colnames(scadenZero)[1] = "Patient"
+
+cellTypesZero <- colnames(scadenZero)[2:ncol(scadenZero)]
+
+newNamesZero <- as.vector(c("Class-switched Memory B Cells",
+                        "Smooth Muscle Cells",
+                        "Endothelial Cells",
+                        "FOXP3+ T Cells",
+                        "CD56- NK Cells",
+                        "CD56+ NK Cells",
+                        "Proliferating T Cells",
+                        "Resident-like Macrophages",
+                        "CD4+ T Cells",
+                        "Lipid Associated Macrophages",
+                        "Inflammatory Lipid Associated Macrophages",
+                        "CD8+ T Cells",
+                        "Inflammatory Foamy Macrophages",
+                        "cDC2",
+                        "Inflammatory Monocyte-derived Macrophages",
+                        "Foamy Macrophages",
+                        "S100A8+ Migrating Monocyte-derived Macrophages",
+                        "Antigen-presenting Monocyte-derived Macrophages",
+                        "cDC1",
+                        "Mast Cells",
+                        "CD16+ Migrating Monocyte-derived Macrophages"))
+
+renamedCellTypesZero <- as.data.frame(cbind(cellTypesZero, newNamesZero))
+
+colnames(scadenZero)[2:ncol(scadenZero)] <- newNamesZero
+
+longScadenPredZero <- scadenZero %>%
+  pivot_longer(
+    cols = -Patient,
+    names_to = "Celltype",
+    values_to = "Proportion"
+  )
+
+ggplot(longScadenPredZero, aes(x = Celltype, y = Proportion)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8))
+```
