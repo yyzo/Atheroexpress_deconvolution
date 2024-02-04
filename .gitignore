@@ -11,3 +11,4 @@
 
 # Ignore all files in subdirectories
 !//
+.Rproj.user
