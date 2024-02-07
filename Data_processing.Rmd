@@ -246,10 +246,8 @@ write.table(scadenCellTypes,
             file = "output/scaden_format_files/scaden_celltypes.txt",
             sep = "\t", row.names = FALSE)
 
-#rownames(scadenCounts) <- seq_len(nrow(scadenCounts)) - 1
-
 write.table(scadenCounts,
-            file = "output/scaden_format_files/scadenOne_counts.txt",
+            file = "output/scaden_format_files/scaden_counts.txt",
             sep = "\t", row.names = FALSE)
 ```
 
