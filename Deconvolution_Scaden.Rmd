@@ -15,14 +15,14 @@ Creating pseudo bulk mixtures for training of the algorithm and performing the d
 
 ### Setup
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 library(magrittr)
 library(tidyverse)
 ```
 
 ## Deconvolution with Scaden
 
-Testing with examples:
+### Example datasets
 
 ```{r}
 exampleBulk <- read.table("example_data/example_bulk_data.txt")
@@ -30,63 +30,75 @@ exampleCellTypes <- read.table("example_data/example_celltypes.txt")
 exampleCounts <- read.table("example_data/example_counts.txt")
 ```
 
+scaden simulate --data C:/Users/YaYua/R_projects/Atheroexpress_deconvolution/example_data -n 100 --pattern "\*\_counts.txt"
+
 ```{bash}
-mkdir example_data
 scaden example --out example_data/
-```
 
-```{bash}
 scaden simulate --data example_data/ -n 100 --pattern "*_counts.txt"
-```
 
-```{bash}
 scaden process data.h5ad example_data/example_bulk_data.txt
-```
 
-```{bash}
-scaden train processed.h5ad --steps 5000 --model_dir model
-#roughly 10 minutes
-```
+scaden train processed.h5ad --steps 5000 --model_dir model #Roughly 10 minutes.
 
-```{bash}
 scaden predict --model_dir model example_data/example_bulk_data.txt
 ```
 
-Own data (renamed rownames to start from 0 in order to match example_counts):
+### AtheroExpress data (rownames excluded)
+
+#### #1
 
 ```{bash}
-scaden simulate --data output/scaden_test_zero/ -n 100 --pattern "*_counts.txt" --out output/scaden_test_zero
+scaden simulate --data output/scaden_format_files/ -n 100 --pattern "*_counts.txt" --out output/scaden_b100_s5000_v1
+
+scaden process output/scaden_b100_s5000_v1/scaden.h5ad output/scaden_format_files/scaden_bulk_data.txt --processed_path output/scaden_b100_s5000_v1/processed.h5ad
+
+scaden train output/scaden_b100_s5000_v1/processed.h5ad --steps 5000 --model_dir models/model_b100_s5000_v1
+
+scaden predict --model_dir models/model_b100_s5000_v1 output/scaden_format_files/scaden_bulk_data.txt
 ```
+
+#### #4: explicitly rename rownames, starting from 1
 
 ```{bash}
-scaden process output/scaden_test_zero/scadenzero.h5ad output/scaden_test_zero/scadenzero_bulk_data.txt --processed_path output/scaden_test_zero/processedzero.h5ad
+scaden simulate --data output/scaden_one/ -n 700 --pattern "*_counts.txt" --out output/scaden_one
+
+scaden process output/scaden_one/scaden.h5ad output/scaden_one/scaden_bulk_data.txt --processed_path output/scaden_one/processed.h5ad
+
+scaden train output/scaden_one/processed.h5ad --steps 5000 --model_dir models/model_one
+
+scaden predict --model_dir models/model_one output/scaden_one/scaden_bulk_data.txt
 ```
+
+#### Making it iterative
+
+**PROCESSED_PATH COMMAND NOT FOUND, DOWNGRADE PYTHON AGAIN?**
 
 ```{bash}
-scaden train output/scaden_test_zero/processedzero.h5ad --steps 5000 --model_dir modelzero
+for i in {1..3}
+do
+  mkdir output/plaque_b700_$i
+  mkdir models/model_plaque_b700_$i
+  
+  scaden simulate --data output/scaden_format_files/ -n 20 --pattern "*_counts.txt" --out output/plaque_b700_$i
+  
+  scaden process output/plaque_b700_$i/scaden.h5ad output/scaden_format_files/scaden_bulk_data.txt
+  --processed_path output/plaque_b700_$i/processed.h5ad
+  
+  scaden train output/plaque_b700_$i/processed.h5ad --steps 1 --model_dir models/model_plaque_b700_$i
+  
+  scaden predict --model_dir models/model_plaque_b700_$i output/scaden_format_files/scaden_bulk_data.txt --outname predictions_plaque_b700_$i
+done
 ```
 
-```{bash}
-scaden predict --model_dir modelzero output/scaden_test_zero/scadenzero_bulk_data.txt
-```
+## Plotting predictions
 
-## Evaluating results
-
-Importing files:
+### Example prediction
 
 ```{r}
-examplePrediction <- read.table("example_predictions.txt")
+examplePrediction <- read.table("example_data/example_predictions.txt")
 
-scadenPred <- read.delim("scaden_predictions.txt", check.names = FALSE)
-colnames(scadenPred)[1] = "Patient"
-```
-
-Making boxplot of the cell type proportions:
-
-Example:
-
-```{r}
-exPivot <- examplePrediction %>%
+longExample <- examplePrediction %>%
   rownames_to_column("Sample") %>%
   pivot_longer(
              cols = -Sample,
@@ -94,15 +106,23 @@ exPivot <- examplePrediction %>%
              values_to = "Proportion"
   )
 
-ggplot(exPivot, aes(x = Celltype, y = Proportion)) +
+ggplot(longExample, aes(x = Celltype, y = Proportion)) +
   geom_boxplot()
-
 ```
 
-Scaden:
+### AtheroExpress data (rownames excluded)
 
 ```{r}
-cellTypes <- colnames(scadenPred)[2:ncol(scadenPred)]
+scadenBulk <- read.delim("output/scaden_format_files/scaden_bulk_data.txt")
+scadenCounts <- read.delim("output/scaden_format_files/scaden_counts.txt")
+scadenCellTypes <- read.delim("output/scaden_format_files/scaden_celltypes.txt")
+
+View(as.data.frame(head(scadenCounts)))
+
+scadenPred1 <- read.delim("scaden_predictions.txt", check.names = FALSE)
+colnames(scadenPred1)[1] = "Patient"
+
+cellTypes <- colnames(scadenPred1)[2:ncol(scadenPred1)]
 
 newNames <- as.vector(c("Class-switched Memory B Cells",
                         "Smooth Muscle Cells",
@@ -128,29 +148,38 @@ newNames <- as.vector(c("Class-switched Memory B Cells",
 
 renamedCellTypes <- as.data.frame(cbind(cellTypes, newNames))
 
-colnames(scadenPred)[2:ncol(scadenPred)] <- newNames
+colnames(scadenPred1)[2:ncol(scadenPred1)] <- newNames
 
-longScadenPred <- scadenPred %>%
+longScadenPred1 <- scadenPred1 %>%
   pivot_longer(
     cols = -Patient,
     names_to = "Celltype",
     values_to = "Proportion"
   )
 
-ggplot(longScadenPred, aes(x = Celltype, y = Proportion)) +
+ggplot(longScadenPred1, aes(x = Celltype, y = Proportion)) +
   geom_boxplot() +
   theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8))
 ```
 
-Scaden zero:
+### Iterative
 
 ```{r}
-scadenZero <- read.delim("scaden_predictions.txt", check.names = FALSE)
-colnames(scadenZero)[1] = "Patient"
+for (i in 1:10){
+  print(i)
+}
 
-cellTypesZero <- colnames(scadenZero)[2:ncol(scadenZero)]
+for(i in 1:10){
+  filePath <- paste("output/plaque_b700_", i, "/predictions_plaque_b700_", i, ".txt", sep = "")
+  fileName <- paste("predictions", i, sep = "")
+  
+  fileName <- read.delim(file_path)
+  colnames(fileName)[1] = "Patient"
+}
 
-newNamesZero <- as.vector(c("Class-switched Memory B Cells",
+cellTypes <- colnames(fileName)[2:ncol(fileName)]
+
+newNames <- as.vector(c("Class-switched Memory B Cells",
                         "Smooth Muscle Cells",
                         "Endothelial Cells",
                         "FOXP3+ T Cells",
@@ -172,18 +201,33 @@ newNamesZero <- as.vector(c("Class-switched Memory B Cells",
                         "Mast Cells",
                         "CD16+ Migrating Monocyte-derived Macrophages"))
 
-renamedCellTypesZero <- as.data.frame(cbind(cellTypesZero, newNamesZero))
+renamedCellTypes <- as.data.frame(cbind(cellTypes, newNames))
 
-colnames(scadenZero)[2:ncol(scadenZero)] <- newNamesZero
+for(i in 1:10){
+  fileName <- paste("predictions", i, sep = "")
+  
+  colnames(fileName)[2:ncol(fileName)] <- newNames
+  
+  longName <- paste("longPredictions", i)
+  
+  longName <- fileName %>%
+    pivot_longer(
+      cols = -Patient,
+      names_to = "Celltype",
+      values_to = "Cell type proportion"
+    )
+  
+  ggplot(longName, aes(x = Celltype, y = Proportion)) +
+    geom_boxplot() +
+    theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8))
+  
+  ggsave(paste(fileName, ".png", sep = ""))
+  
+}
+```
 
-longScadenPredZero <- scadenZero %>%
-  pivot_longer(
-    cols = -Patient,
-    names_to = "Celltype",
-    values_to = "Proportion"
-  )
+## Session info
 
-ggplot(longScadenPredZero, aes(x = Celltype, y = Proportion)) +
-  geom_boxplot() +
-  theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8))
+```{r}
+devtools::session_info()
 ```
