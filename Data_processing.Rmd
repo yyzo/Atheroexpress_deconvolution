@@ -21,6 +21,7 @@ library(tidyverse)
 library(Seurat)
 library(Biobase)
 library(rstudioapi)
+library(fs)
 
 setwd(dirname(getActiveDocumentContext()$path))
 ```
@@ -66,31 +67,6 @@ From the file, the PBMC data is removed leaving only the data pertaining the ath
 scData <- subset(read_rds("input/full.43p_10X.integrated.cleaned.archetypes.seurat.RDS"), Tissue != "PBMC")
 ```
 
-#### ~~Quality control data~~
-
-~~In order to be able to create plots without the lengthy cell type names posing a problem, cell types are renamed based on their corresponding index.~~
-
-```{r}
-# numLevels <- as.character(1:25)
-# 
-# names(numLevels) <- levels(scPlaque)
-# 
-# scRename <- RenameIdents(scPlaque, numLevels) 
-# levels(scPlaque)
-```
-
-~~The commonly used quality control metrics will be used to filter the cells:~~
-
--   ~~unique feature counts of cells (`nFeature_RNA`) \< 200 or 2500 \>.~~
-
--   ~~mitochondrial counts of cells (`percent.mt`) of 5%~~
-
-```{r}
-# VlnPlot(scRename, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
-
-# scFilter <- subset(scPlaque, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
-```
-
 #### Filter genes
 
 As the total number of genes in the scRNA-seq dataset (24691 genes) differs from the total in the bulk RNA-seq dataset (19214 genes), it is necessary to ensure that both datasets contain the same set of genes. It enables robust comparisons between the datasets.
@@ -113,7 +89,10 @@ DefaultAssay(scData) <- "RNA"
 toKeep <- intersect(Features(scData), bulkFilter$symbol)
 
 bulkFinal <- bulkFilter %>%
-  filter(symbol %in% toKeep)
+  filter(symbol %in% toKeep) %>%
+  as.data.frame() %>%
+  column_to_rownames("symbol") %>%
+  subset(select = -ensembl_gene_id)
 
 counts <- scData[["RNA"]]$counts
 
@@ -184,19 +163,11 @@ dfCellTypes <- as.data.frame(sort(table(Idents(scFilter)))) %>%
 aboveThreshold <- factor(dfCellTypes$cellType[dfCellTypes$Freq >= 50])
 
 scFinal <- subset(scFilter, idents = aboveThreshold)
-
-# length(Cells(scFilter))
-# length(Cells(scFinal))
-# 
-# unique(Idents(scFilter))
-# unique(Idents(scFinal))
-# 
-# dim(scFinal)
 ```
 
 ```{r include=FALSE}
 #Remove redundant Seurat objects in order to free up space.
-rm(scData, scFilter, bulkData, bulkFilter)
+rm(scData, scFilter, bulkData, bulkFilter, counts, countsKeep, completeHGNC, ncRNA)
 gc()
 ```
 
@@ -223,32 +194,48 @@ In order to assess whether clustering of certain cell types would reduce the com
 
 For the deconvolution method "Scaden", the input files need to be correctly formatted. For detailed instructions, see the [Scaden documentation page](https://scaden.readthedocs.io/en/latest/index.html).
 
-```{r}
-scadenBulk <- bulkFinal %>%
-  as.data.frame() %>%
-  column_to_rownames("symbol") %>%
-  subset(select = -ensembl_gene_id)
-
-write.table(scadenBulk,
-            file = "output/scaden_format_files/scaden_bulk_data.txt",
-            sep = "\t")
-
-scadenCellTypes <- as.data.frame(Idents(scFinal)) %>%
+```{r message=FALSE, warning=FALSE}
+scCellTypes <- as.data.frame(Idents(scFinal)) %>%
   rename(Celltype = `Idents(scFinal)`)
   
-scadenCounts <- as.data.frame(scFinal[["RNA"]]$counts) %>%
+scCounts <- as.data.frame(scFinal[["RNA"]]$counts) %>%
   t()
 
 #Check if the rownames of the two data frames are in the same order.
-table(rownames(scadenCounts) == rownames(scadenCellTypes))
+table(rownames(scCounts) == rownames(scCellTypes))
 
-write.table(scadenCellTypes,
+write.table(scCellTypes,
             file = "output/scaden_format_files/scaden_celltypes.txt",
             sep = "\t", row.names = FALSE)
 
-write.table(scadenCounts,
+write.table(scCounts,
             file = "output/scaden_format_files/scaden_counts.txt",
             sep = "\t", row.names = FALSE)
+
+write.table(bulkFinal,
+            file = "output/scaden_format_files/scaden_bulk_data.txt",
+            sep = "\t")
+```
+
+## Format files for BayesPrism
+
+```{r}
+bayesPrismBulk <- bulkFinal %>%
+  t()
+
+write.table(bayesPrismBulk,
+            file = "output/bayesPrism_format_files/bayesPrism_bulk_data.txt",
+            sep = "\t")
+
+file_copy("output/scaden_format_files/scaden_counts.txt",
+          "output/bayesPrism_format_files/bayesPrism_counts.txt",
+          overwrite = FALSE)
+
+test <- as.data.frame(cell.state.labels)
+test2 <- as.data.frame(cell.type.labels)
+
+unique(test2)
+unique(test)
 ```
 
 ### Session info
