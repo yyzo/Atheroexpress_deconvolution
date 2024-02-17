@@ -27,7 +27,7 @@ library(tidyverse)
 ```{r}
 exampleBulk <- read.table("example_data/example_bulk_data.txt")
 exampleCellTypes <- read.table("example_data/example_celltypes.txt")
-exampleCounts <- read.table("example_data/example_counts.txt")
+exampleCounts <- read_table("example_data/example_counts.txt")
 ```
 
 ```{bash}
@@ -40,23 +40,80 @@ scaden train processed.h5ad --steps 5000 --model_dir model
 scaden predict --model_dir model example_data/example_bulk_data.txt
 ```
 
+```{bash}
+dirPath="example_data/"
+
+scaden simulate --data $dirPath -n 10 --pattern "*_counts.txt"
+```
+
 ### AtheroExpress data
 
+```{r}
+scadenBulk <- read.delim("output/scaden_format_files/scaden_bulk_data.txt")
+scadenCellTypes <- read.delim("output/scaden_format_files/scaden_celltypes.txt")
+scadenCounts <- read.delim("output/scaden_format_files/scaden_counts.txt")
+
+19:24
+```
+
+]TEST
+
 ```{bash}
-for i in {1..10}
+bk="800"
+
+dirPathOutput="output/scaden_simulations_plaque/scaden_plaque_b$bk/plaque_b${bk}_"
+
+dirPathModel="models/scaden_models_plaque/model_plaque_b${bk}_"
+
+for i in {1..2}
 do
-  mkdir output/plaque_b700_$i
-  
-  scaden simulate --data output/scaden_format_files/ -n 800 --pattern "*_counts.txt" --out output/plaque_b700_$i
-  
-  scaden process output/plaque_b700_$i/scaden.h5ad output/scaden_format_files/scaden_bulk_data.txt --processed_path output/plaque_b700_$i/processed.h5ad
-  
-  mkdir models/model_plaque_b700_$i
-  
-  scaden train output/plaque_b700_$i/processed.h5ad --steps 5000 --model_dir models/model_plaque_b700_$i
-  
-  scaden predict --model_dir models/model_plaque_b700_$i output/scaden_format_files/scaden_bulk_data.txt --outname predictions_plaque_b700_$i
+  mv $i.txt ${dirPathOutput}${i}
 done
+```
+
+```{bash}
+source functions/functions_bash.sh
+
+bk="test"
+createDir "output/scaden_simulations_plaque/scaden_plaque_b$bk"
+```
+
+#### 800 bulk samples
+
+```{bash}
+source functions/functions_bash.sh
+set -e
+
+bk="10" #Number of bulk RNA-seq samples to be simulated.
+
+dirPathOutput="output/scaden_simulations_plaque/scaden_plaque_b$bk/plaque_b${bk}_"
+dirPathModel="models/scaden_models_plaque/scaden_models_plaque_b$bk/model_plaque_b${bk}_"
+dirPathPred="output/scaden_simulations_plaque/scaden_plaque_b$bk/predictions"
+
+createDir "output/scaden_simulations_plaque/scaden_plaque_b$bk"
+createDir "models/scaden_models_plaque/scaden_models_plaque_b$bk"
+createDir "output/scaden_simulations_plaque/scaden_plaque_b$bk/predictions"
+
+for i in {14..15}
+do
+  mkdir ${dirPathOutput}${i}
+  
+  scaden simulate --data output/scaden_format_files/ -n $bk --pattern "*_counts.txt" --out ${dirPathOutput}${i}
+  
+  scaden process ${dirPathOutput}${i}/scaden.h5ad output/scaden_format_files/scaden_bulk_data.txt --processed_path ${dirPathOutput}${i}/processed.h5ad
+  
+  mkdir ${dirPathModel}${i}
+  
+  scaden train ${dirPathOutput}${i}/processed.h5ad --steps 50 --model_dir ${dirPathModel}${i}
+  
+  scaden predict --model_dir ${dirPathModel}${i} output/scaden_format_files/scaden_bulk_data.txt --outname predictions_plaque_b${bk}_${i}
+  
+  mv predictions_plaque_b${bk}_${i} ${dirPathPred}
+done
+```
+
+```{bash}
+shutdown now
 ```
 
 ## Plotting predictions
