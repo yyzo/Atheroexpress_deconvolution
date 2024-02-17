@@ -1,0 +1,77 @@
+---
+title: "Deconvolution_BayesPrism"
+author: "Yayuan Zhu"
+date: "2024-02-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+```{r message=FALSE, warning=FALSE}
+library(magrittr)
+library(tidyverse)
+library(BayesPrism)
+```
+
+## Testing with tutorial data
+
+...
+
+```{r}
+load("tutorial.gbm.rdata")
+```
+
+```{r}
+sc.dat.filtered <- cleanup.genes (input=sc.dat,
+                                  input.type="count.matrix",
+                                    species="hs", 
+                                    gene.group=c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY") ,
+                                    exp.cells=5)
+
+sc.dat.filtered.pc <-  select.gene.type (sc.dat.filtered,
+                                        gene.type = "protein_coding")
+
+rm(sc.dat.filtered)
+gc()
+
+myPrism <- new.prism(
+  reference=sc.dat.filtered.pc, 
+  mixture=bk.dat,
+  input.type="count.matrix", 
+  cell.type.labels = cell.type.labels, 
+  cell.state.labels = cell.state.labels,
+  key="tumor",
+  outlier.cut=0.01,
+    outlier.fraction=0.1,
+)
+
+rm(sc.dat.filtered.pc)
+gc()
+
+bp.res <- run.prism(prism = myPrism, n.cores=50)
+bp.res
+
+
+```
+
+## Importing files
+
+```{r}
+
+```
+
+...
+
+```{r}
+cellTypeLabels <- as.vector(cellTypeLabels)
+```
+
+## Session info
+
+```{r}
+devtools::session_info()
+```
