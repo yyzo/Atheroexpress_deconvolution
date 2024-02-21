@@ -40,12 +40,6 @@ scaden train processed.h5ad --steps 5000 --model_dir model
 scaden predict --model_dir model example_data/example_bulk_data.txt
 ```
 
-```{bash}
-dirPath="example_data/"
-
-scaden simulate --data $dirPath -n 10 --pattern "*_counts.txt"
-```
-
 ### AtheroExpress data
 
 ```{r}
@@ -53,38 +47,14 @@ scadenBulk <- read.delim("output/scaden_format_files/scaden_bulk_data.txt")
 scadenCellTypes <- read.delim("output/scaden_format_files/scaden_celltypes.txt")
 scadenCounts <- read.delim("output/scaden_format_files/scaden_counts.txt")
 
-19:24
+View(head(scadenCounts)[1:5])
 ```
-
-]TEST
-
-```{bash}
-bk="800"
-
-dirPathOutput="output/scaden_simulations_plaque/scaden_plaque_b$bk/plaque_b${bk}_"
-
-dirPathModel="models/scaden_models_plaque/model_plaque_b${bk}_"
-
-for i in {1..2}
-do
-  mv $i.txt ${dirPathOutput}${i}
-done
-```
-
-```{bash}
-source functions/functions_bash.sh
-
-bk="test"
-createDir "output/scaden_simulations_plaque/scaden_plaque_b$bk"
-```
-
-#### 800 bulk samples
 
 ```{bash}
 source functions/functions_bash.sh
 set -e
 
-bk="10" #Number of bulk RNA-seq samples to be simulated.
+bk="500" #Number of bulk RNA-seq samples to be simulated.
 
 dirPathOutput="output/scaden_simulations_plaque/scaden_plaque_b$bk/plaque_b${bk}_"
 dirPathModel="models/scaden_models_plaque/scaden_models_plaque_b$bk/model_plaque_b${bk}_"
@@ -92,9 +62,9 @@ dirPathPred="output/scaden_simulations_plaque/scaden_plaque_b$bk/predictions"
 
 createDir "output/scaden_simulations_plaque/scaden_plaque_b$bk"
 createDir "models/scaden_models_plaque/scaden_models_plaque_b$bk"
-createDir "output/scaden_simulations_plaque/scaden_plaque_b$bk/predictions"
+createDir "output/scaden_simulations_plaque/scaden_plaque_b$bk/predictions"             
 
-for i in {14..15}
+for i in {1..15}
 do
   mkdir ${dirPathOutput}${i}
   
@@ -104,7 +74,7 @@ do
   
   mkdir ${dirPathModel}${i}
   
-  scaden train ${dirPathOutput}${i}/processed.h5ad --steps 50 --model_dir ${dirPathModel}${i}
+  scaden train ${dirPathOutput}${i}/processed.h5ad --steps 5000 --model_dir ${dirPathModel}${i}
   
   scaden predict --model_dir ${dirPathModel}${i} output/scaden_format_files/scaden_bulk_data.txt --outname predictions_plaque_b${bk}_${i}
   
@@ -135,120 +105,114 @@ ggplot(longExample, aes(x = Celltype, y = Proportion)) +
   geom_boxplot()
 ```
 
-### AtheroExpress data (rownames excluded)
+### Preparing data and plotting figures: separate
 
 ```{r}
-scadenBulk <- read.delim("output/scaden_format_files/scaden_bulk_data.txt")
-scadenCounts <- read.delim("output/scaden_format_files/scaden_counts.txt")
-scadenCellTypes <- read.delim("output/scaden_format_files/scaden_celltypes.txt")
+bk <- "500"
 
-View(as.data.frame(head(scadenCounts)))
-
-scadenPred1 <- read.delim("scaden_predictions.txt", check.names = FALSE)
-colnames(scadenPred1)[1] = "Patient"
+for(i in 1:15){
+  path <- paste0("output/scaden_simulations_plaque/scaden_plaque_b", bk, "/predictions/predictions_plaque_b", bk,"_", i)
+  file <- paste0("scadenPred", i)
+  
+  assign(file, read.delim(path,
+                         check.names = FALSE))
+  assign(file, get(file)[, order(colnames(get(file)))])
+  assign(file, `colnames<-`(get(file), c("Patient", colnames(get(file))[-1])))
+}
 
 cellTypes <- colnames(scadenPred1)[2:ncol(scadenPred1)]
 
-newNames <- as.vector(c("Class-switched Memory B Cells",
-                        "Smooth Muscle Cells",
-                        "Endothelial Cells",
-                        "FOXP3+ T Cells",
-                        "CD56- NK Cells",
-                        "CD56+ NK Cells",
-                        "Proliferating T Cells",
+newNames <- as.vector(c("Smooth Muscle Cells",
+                        "CD16+ MIM-derived Macrophages",
                         "Resident-like Macrophages",
-                        "CD4+ T Cells",
-                        "Lipid Associated Macrophages",
-                        "Inflammatory Lipid Associated Macrophages",
-                        "CD8+ T Cells",
-                        "Inflammatory Foamy Macrophages",
-                        "cDC2",
-                        "Inflammatory Monocyte-derived Macrophages",
+                        "AIM-derived Macrophages",
+                        "IAIM-derived Macrophages",
+                        "S100A8+ MIM-derived Macrophages",
+                        "IRLA Macrophages",
                         "Foamy Macrophages",
-                        "S100A8+ Migrating Monocyte-derived Macrophages",
-                        "Antigen-presenting Monocyte-derived Macrophages",
+                        "Inflammatory Foamy Macrophages",
+                        "Lipid Associated Macrophages",
                         "cDC1",
-                        "Mast Cells",
-                        "CD16+ Migrating Monocyte-derived Macrophages"))
+                        "Proliferating T cells",
+                        "Endothelial cells",
+                        "CD4+ T cells",
+                        "CD56- NK cells",
+                        "CD56+ NK cells",
+                        "Memory B Cells",
+                        "CD8+ T cells",
+                        "cDC2",
+                        "FOXP3+ T Cells",
+                        "Mast Cells"))
 
 renamedCellTypes <- as.data.frame(cbind(cellTypes, newNames))
 
-colnames(scadenPred1)[2:ncol(scadenPred1)] <- newNames
+for(j in 1:15){
+  file <- paste0("scadenPred", j)
+  data <- get(file)
+  
+  colnames(data)[-1] <- newNames
+  assign(file, data)
+}
 
-longScadenPred1 <- scadenPred1 %>%
-  pivot_longer(
-    cols = -Patient,
-    names_to = "Celltype",
-    values_to = "Proportion"
-  )
-
-ggplot(longScadenPred1, aes(x = Celltype, y = Proportion)) +
-  geom_boxplot() +
-  theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8))
+for(k in 1:15){
+  file <- paste0("scadenPred", k)
+  longFile <- paste0("longScadenPred", k)
+  
+  assign(longFile, get(file) %>%
+           pivot_longer(
+             cols = -Patient,
+             names_to = "Celltype",
+             values_to = "Proportion"))
+}
 ```
 
-### Iterative
+```{r}
+dirPathFigure <- paste0("output/scaden_simulations_plaque/scaden_plaque_b", bk, "/predictions/scaden_plaque_predictions_graphs.pdf")
+
+pdf(file = dirPathFigure)
+
+for(n in 1:15){
+  longFile <- paste0("longScadenPred", n)
+  p <- ggplot(get(longFile), aes(x = Celltype, y = Proportion)) +
+    geom_boxplot() +
+    labs(title = "Scaden plaque predictions",
+               subtitle = paste0("Bulk simulated:", bk, "\nRun:", n)) +
+    theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8))
+  print(p)
+}
+
+dev.off()
+```
+
+### Preparing data and plotting figures: average
 
 ```{r}
-for (i in 1:10){
-  print(i)
+#Match patient & celltype
+  #Take proportion (and put it in a vector?)
+  #Take average of proportions
+
+avgProportions <- as.data.frame(longScadenPred1[1:2])
+
+for(i in 1:15){
+  avgProportions <- left_join(avgProportions, get(paste0("longScadenPred", i)), by = c("Patient", "Celltype"))
 }
 
-for(i in 1:10){
-  filePath <- paste("output/plaque_b700_", i, "/predictions_plaque_b700_", i, ".txt", sep = "")
-  fileName <- paste("predictions", i, sep = "")
-  
-  fileName <- read.delim(file_path)
-  colnames(fileName)[1] = "Patient"
-}
+avgProportions$`Average proportion` <- rowMeans(avgProportions[, 3:17])
 
-cellTypes <- colnames(fileName)[2:ncol(fileName)]
+dirPathFigureAvg <- paste0("output/scaden_simulations_plaque/scaden_plaque_b", bk, "/predictions/scaden_plaque_predictions_graphs_average.pdf")
 
-newNames <- as.vector(c("Class-switched Memory B Cells",
-                        "Smooth Muscle Cells",
-                        "Endothelial Cells",
-                        "FOXP3+ T Cells",
-                        "CD56- NK Cells",
-                        "CD56+ NK Cells",
-                        "Proliferating T Cells",
-                        "Resident-like Macrophages",
-                        "CD4+ T Cells",
-                        "Lipid Associated Macrophages",
-                        "Inflammatory Lipid Associated Macrophages",
-                        "CD8+ T Cells",
-                        "Inflammatory Foamy Macrophages",
-                        "cDC2",
-                        "Inflammatory Monocyte-derived Macrophages",
-                        "Foamy Macrophages",
-                        "S100A8+ Migrating Monocyte-derived Macrophages",
-                        "Antigen-presenting Monocyte-derived Macrophages",
-                        "cDC1",
-                        "Mast Cells",
-                        "CD16+ Migrating Monocyte-derived Macrophages"))
+pdf(file = dirPathFigureAvg)
 
-renamedCellTypes <- as.data.frame(cbind(cellTypes, newNames))
+pAvg <- ggplot(avgProportions, aes(x = Celltype, y = `Average proportion`)) +
+  geom_boxplot() +
+  labs(title = "Scaden plaque predictions",
+               subtitle = paste0("Bulk simulated:", bk)) +
+  theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8))
 
-for(i in 1:10){
-  fileName <- paste("predictions", i, sep = "")
-  
-  colnames(fileName)[2:ncol(fileName)] <- newNames
-  
-  longName <- paste("longPredictions", i)
-  
-  longName <- fileName %>%
-    pivot_longer(
-      cols = -Patient,
-      names_to = "Celltype",
-      values_to = "Cell type proportion"
-    )
-  
-  ggplot(longName, aes(x = Celltype, y = Proportion)) +
-    geom_boxplot() +
-    theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8))
-  
-  ggsave(paste(fileName, ".png", sep = ""))
-  
-}
+print(pAvg)
+
+dev.off()
+
 ```
 
 ## Session info
