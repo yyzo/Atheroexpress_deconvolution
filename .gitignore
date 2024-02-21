@@ -1,10 +1,11 @@
 # Ignore all files
 *
 
-# Except .py, .R, and .Rmd files
+# Except .py, .R, .Rmd, and .sh files
 !*.py
 !*.R
 !*.Rmd
+!*.sh
 !*.gitignore
 
 # Unignore directories
