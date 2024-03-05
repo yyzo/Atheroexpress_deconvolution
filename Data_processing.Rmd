@@ -20,6 +20,7 @@ library(magrittr)
 library(tidyverse)
 library(Seurat)
 library(Biobase)
+library(stringr)
 library(rstudioapi)
 library(fs)
 
@@ -49,7 +50,7 @@ First, gene symbols will be added to the dataset from the HGNC complete archive.
 ```{r}
 bulkFilter <- bulkData %>% 
   filter(gene %in% completeHGNC$ensembl_gene_id) %>%
-  rename("ensembl_gene_id"="gene") %>%
+  rename("ensembl_gene_id" = "gene") %>%
   left_join(select(completeHGNC, ensembl_gene_id, symbol), by = "ensembl_gene_id") %>%
   select(ensembl_gene_id, symbol, everything()) %>%
   filter(!(symbol %in% ncRNA$Symbol))
@@ -149,8 +150,8 @@ ggplot(dfCellTypesRename, aes(x = cellType, y = Freq)) +
 The plot above, but in a shiny application:
 
 ```{r}
-knitr::include_url("https://yyzo.shinyapps.io/Frequence_sequenced_cell_type/",
-                   height = "630px")
+# knitr::include_url("https://yyzo.shinyapps.io/Frequence_sequenced_cell_type/",
+#                    height = "630px")
 ```
 
 From the plots above and the previous work of Gemma, it has been decided to keep cell types which have a frequency of 50 and higher.
@@ -171,6 +172,8 @@ rm(scData, scFilter, bulkData, bulkFilter, counts, countsKeep, completeHGNC, ncR
 gc()
 ```
 
+#### Clustering
+
 The final scRNA-sequencing dataset contains 21 cell types. How these cell types are clustered can be seen in the UMAP plot below.
 
 ```{r}
@@ -184,22 +187,89 @@ levels(scFinal)
 DimPlot(scRename,
         reduction = "umap",
         label = TRUE,
-        label.size = 1.5,
+        label.size = 5,
         repel = TRUE)
 ```
 
-In order to assess whether clustering of certain cell types would reduce the complexity of the deconvolution, the 21 cell types will be reduced to ...
+In order to assess whether clustering of certain cell types would reduce the complexity of the deconvolution, the 21 cell types will be reduced to 11 and 7 cell types.
+
+![](images/cell_clustering.png)
+
+```{r}
+scCellTypes21 <- as.data.frame(Idents(scFinal)) %>%
+  rename(Celltype = `Idents(scFinal)`)
+# %>%
+#   mutate(Celltype = as.character(Celltype))
+
+#11 cell types
+cluster11 <- list(
+  "Resident/lipid macrophage" = unique(str_subset(scCellTypes21$Celltype, "(?i)lipid|foamy|resident")),
+  "Monocyte-derived macrophage" = unique(str_subset(scCellTypes21$Celltype, "(?i)monocyte")),
+  "T cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)\\W\\sT\\scell")),
+  "NK cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)NK cell")),
+  "Proliferating T cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)prolif")),
+  "cDC1" = unique(str_subset(scCellTypes21$Celltype, "(?i)cDC1")),
+  "cDC2" = unique(str_subset(scCellTypes21$Celltype, "(?i)cDC2")),
+  "Memory B cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)\\sB\\scell")),
+  "Smooth muscle cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)smooth")),
+  "Endothelial cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)endothelial")),
+  "Mast cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)mast"))
+)
+
+scCellTypes11 <- scCellTypes21
+
+clType <- as.character(scCellTypes11$Celltype)
+
+for (level in levels(scCellTypes11$Celltype)) {
+  for (name in names(cluster11)) {
+    if (level %in% unlist(cluster11[[name]])) {
+      clType[clType %in% unlist(cluster11[[name]])] <- name
+    }
+  }
+}
+
+scCellTypes11$Celltype <- factor(clType, levels = names(cluster11))
+
+unique(scCellTypes11$Celltype)
+
+#7 cell types
+cluster7 <- list(
+  "Macrophage" = unique(str_subset(scCellTypes11$Celltype, "(?i)macrophage")),
+  "T/NK cell" = unique(str_subset(scCellTypes11$Celltype, "(T\\scell)|(NK\\scell)")),
+  "Dendritic cell" = unique(str_subset(scCellTypes11$Celltype, "(cDC1)|(cDC2)")),
+  "Memory B cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)\\sB\\scell")),
+  "Smooth muscle cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)smooth")),
+  "Endothelial cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)endothelial")),
+  "Mast cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)mast"))
+)
+
+scCellTypes7 <- scCellTypes11
+
+clType <- as.character(scCellTypes7$Celltype)
+
+for (level in levels(scCellTypes7$Celltype)) {
+  for (name in names(cluster7)) {
+    if (level %in% unlist(cluster7[[name]])) {
+      clType[clType %in% unlist(cluster7[[name]])] <- name
+    }
+  }
+}
+
+scCellTypes7$Celltype <- factor(clType, levels = names(cluster7))
+
+unique(scCellTypes7$Celltype)
+
+```
 
 ## Format files for Scaden
 
 For the deconvolution method "Scaden", the input files need to be correctly formatted. For detailed instructions, see the [Scaden documentation page](https://scaden.readthedocs.io/en/latest/index.html).
 
 ```{r message=FALSE, warning=FALSE}
-scCellTypes <- as.data.frame(Idents(scFinal)) %>%
-  rename(Celltype = `Idents(scFinal)`)
-  
 scCounts <- as.data.frame(scFinal[["RNA"]]$counts) %>%
   t()
+
+View(head(scCounts))
 
 #Check if the rownames of the two data frames are in the same order.
 table(rownames(scCounts) == rownames(scCellTypes))
@@ -230,12 +300,6 @@ write.table(bayesPrismBulk,
 file_copy("output/scaden_format_files/scaden_counts.txt",
           "output/bayesPrism_format_files/bayesPrism_counts.txt",
           overwrite = FALSE)
-
-test <- as.data.frame(cell.state.labels)
-test2 <- as.data.frame(cell.type.labels)
-
-unique(test2)
-unique(test)
 ```
 
 ### Session info
