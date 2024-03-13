@@ -170,6 +170,8 @@ scFinal <- subset(scFilter, idents = aboveThreshold)
 #Remove redundant Seurat objects in order to free up space.
 rm(scData, scFilter, bulkData, bulkFilter, counts, countsKeep, completeHGNC, ncRNA)
 gc()
+
+rm(data, seurat_object)
 ```
 
 #### Clustering
@@ -177,73 +179,93 @@ gc()
 The final scRNA-sequencing dataset contains 21 cell types. How these cell types are clustered can be seen in the UMAP plot below.
 
 ```{r}
+#Seurat clusters
 numLevels <- as.character(1:21)
 
 names(numLevels) <- levels(scFinal)
 
 scRename <- RenameIdents(scFinal, numLevels)
 levels(scFinal)
+```
 
-DimPlot(scRename,
-        reduction = "umap",
-        label = TRUE,
-        label.size = 5,
-        repel = TRUE)
+```{r}
+scRename <- scFinal
+
+ct <- Idents(scRename)
+
+numCellType <- case_when(ct == "CD14+TREM2+FOLR2-ABCG+ Lipid Associated Macrophages"~1,
+                         ct == "CD14+IL1B+SELL+CD16- Antigen-presenting Inflammatory Monocyte-derived Macrophages"~2,
+                         ct == "CD14+IL1B+SELL+S100A8+ Migrating Inflammatory Monocyte-derived Macrophages"~3,
+                         ct == "CD14+TREM2-OLR1+NLRP3+ Inflammatory Foamy Macrophages"~4,
+                         ct == "CD14+IL1B-TREM2-FOLR2+ Resident-like Macrophages"~5,
+                         ct == "CD14+IL1B+SELL+MX1+ Interferon Activated Inflammatory Monocyte-derived Macrophages"~6,
+                         ct == "CD14+-IL1B+SELL+CD16+ Migrating Inflammatory Monocyte-derived Macrophages"~7,
+                         ct == "CD14+TNF+TREM2+FOLR2+ Inflammatory Resident-like Lipid Associated Macrophages"~8,
+                         ct == "CD14+TREM2-OLR1+ABCA+ Foamy Macrophages"~9,
+                         ct == "CD4+ T Cells"~10,
+                         ct == "CD8+ T Cells"~11,
+                         ct == "CD56-CD16+ NK Cells"~12,
+                         ct == "CD79+ Class-switched Memory B Cells"~13,
+                         ct == "FOXP3+ T Cells"~14,
+                         ct == "CD56+KLRC1+ NK Cells"~15,
+                         ct == "CD1C+ cDC1"~16,
+                         ct == "CD34+ Endothelial Cells"~17,
+                         ct == "ACTA2+ Smooth Muscle Cells"~18,
+                         ct == "CD3+MKI67+ Proliferating T Cells"~19,
+                         ct == "KIT+ Mast Cells"~20,
+                         ct=="CLEC9A+ cDC2"~21)
+
+newLabel <- paste0(numCellType, ": ", ct)
+Idents(scRename) <- numCellType
+
+plotCluster21 <- DimPlot(scRename,
+                         reduction = "umap", 
+                         label = TRUE, 
+                         label.size = 6, 
+                         label.box = TRUE, 
+                         repel = TRUE, 
+                         dims = c(1, 2),
+                         order = sort(unique(numCellType), decreasing = T)) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 15),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        legend.text = element_text(size = 15)) +
+  guides(color = guide_legend(override.aes = list(size=4), ncol=1)) +
+  scale_color_discrete(labels = unique(newLabel)[order(as.numeric(gsub(":.*", "", unique(newLabel))))])
+```
+
+```{r}
+tiff("output/figures/sc_plaque_cluster_21.tiff",
+     width = 1280,
+     height = 720,
+     units = "px")
+
+print(plotCluster21)
+
+dev.off()
 ```
 
 In order to assess whether clustering of certain cell types would reduce the complexity of the deconvolution, the 21 cell types will be reduced to 11 and 7 cell types.
 
-![](images/cell_clustering.png)
-
 ```{r}
 scCellTypes21 <- as.data.frame(Idents(scFinal)) %>%
   rename(Celltype = `Idents(scFinal)`)
-# %>%
-#   mutate(Celltype = as.character(Celltype))
 
-#11 cell types
-cluster11 <- list(
-  "Resident/lipid macrophage" = unique(str_subset(scCellTypes21$Celltype, "(?i)lipid|foamy|resident")),
-  "Monocyte-derived macrophage" = unique(str_subset(scCellTypes21$Celltype, "(?i)monocyte")),
-  "T cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)\\W\\sT\\scell")),
-  "NK cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)NK cell")),
-  "Proliferating T cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)prolif")),
-  "cDC1" = unique(str_subset(scCellTypes21$Celltype, "(?i)cDC1")),
-  "cDC2" = unique(str_subset(scCellTypes21$Celltype, "(?i)cDC2")),
-  "Memory B cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)\\sB\\scell")),
-  "Smooth muscle cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)smooth")),
-  "Endothelial cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)endothelial")),
-  "Mast cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)mast"))
-)
-
-scCellTypes11 <- scCellTypes21
-
-clType <- as.character(scCellTypes11$Celltype)
-
-for (level in levels(scCellTypes11$Celltype)) {
-  for (name in names(cluster11)) {
-    if (level %in% unlist(cluster11[[name]])) {
-      clType[clType %in% unlist(cluster11[[name]])] <- name
-    }
-  }
-}
-
-scCellTypes11$Celltype <- factor(clType, levels = names(cluster11))
-
-unique(scCellTypes11$Celltype)
+unique(scCellTypes21$Celltype)
 
 #7 cell types
 cluster7 <- list(
-  "Macrophage" = unique(str_subset(scCellTypes11$Celltype, "(?i)macrophage")),
-  "T/NK cell" = unique(str_subset(scCellTypes11$Celltype, "(T\\scell)|(NK\\scell)")),
-  "Dendritic cell" = unique(str_subset(scCellTypes11$Celltype, "(cDC1)|(cDC2)")),
+  "Macrophage" = unique(str_subset(scCellTypes21$Celltype, "(?i)macrophage")),
+  "T/NK cell" = unique(str_subset(scCellTypes21$Celltype, "((?i)\\sT\\scell)|((?i)NK cell)")),
+  "Dendritic cell" = unique(str_subset(scCellTypes21$Celltype, "(cDC1)|(cDC2)")),
   "Memory B cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)\\sB\\scell")),
   "Smooth muscle cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)smooth")),
   "Endothelial cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)endothelial")),
   "Mast cell" = unique(str_subset(scCellTypes21$Celltype, "(?i)mast"))
 )
 
-scCellTypes7 <- scCellTypes11
+scCellTypes7 <- scCellTypes21
 
 clType <- as.character(scCellTypes7$Celltype)
 
@@ -261,6 +283,67 @@ unique(scCellTypes7$Celltype)
 
 ```
 
+```{r}
+ct7 <- case_when(ct %in% c("CD14+TREM2+FOLR2-ABCG+ Lipid Associated Macrophages",
+                            "CD14+IL1B+SELL+CD16- Antigen-presenting Inflammatory Monocyte-derived Macrophages",
+                            "CD14+IL1B+SELL+S100A8+ Migrating Inflammatory Monocyte-derived Macrophages",
+                            "CD14+TREM2-OLR1+NLRP3+ Inflammatory Foamy Macrophages",
+                            "CD14+IL1B-TREM2-FOLR2+ Resident-like Macrophages",
+                            "CD14+IL1B+SELL+MX1+ Interferon Activated Inflammatory Monocyte-derived Macrophages",
+                            "CD14+-IL1B+SELL+CD16+ Migrating Inflammatory Monocyte-derived Macrophages",
+                            "CD14+TNF+TREM2+FOLR2+ Inflammatory Resident-like Lipid Associated Macrophages",
+                            "CD14+TREM2-OLR1+ABCA+ Foamy Macrophages")~"Macrophage",
+                  ct %in% c("CD4+ T Cells",
+                            "CD8+ T Cells",
+                            "CD56-CD16+ NK Cells",
+                            "FOXP3+ T Cells",
+                            "CD56+KLRC1+ NK Cells",
+                            "CD3+MKI67+ Proliferating T Cells")~"T/NK cell",
+                  ct %in% c("CD1C+ cDC1",
+                            "CLEC9A+ cDC2")~"Dendritic cell",
+                  ct=="CD79+ Class-switched Memory B Cells"~"Memory B cell", 
+                  ct=="CD34+ Endothelial Cells"~"Endothelial cell", 
+                  ct=="ACTA2+ Smooth Muscle Cells"~"Smooth muscle cell",
+                  ct=="KIT+ Mast Cells"~"Mast cell")
+
+numCellType7 <- case_when(ct7=="Macrophage"~1,
+                           ct7=="T/NK cell"~2,
+                           ct7=="Dendritic cell"~3,
+                           ct7=="Memory B cell"~4,
+                           ct7=="Endothelial cell"~5,
+                           ct7=="Smooth muscle cell"~6,
+                           ct7=="Mast cell"~7)
+
+newLabel7 <- paste0(numCellType7, ": ", ct7)
+
+scRename7 <- scFinal
+Idents(scRename7) <- numCellType7
+
+plotCluster7 <- DimPlot(scRename7,
+                         reduction = "umap", 
+                         label = TRUE, 
+                         label.size = 6, 
+                         label.box = TRUE, 
+                         dims = c(1, 2),
+                         order = sort(unique(numCellType7), decreasing = T)) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 15),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        legend.text = element_text(size = 15)) +
+  guides(color = guide_legend(override.aes = list(size=4), ncol=1)) +
+  scale_color_discrete(labels = unique(newLabel7)[order(as.numeric(gsub(":.*", "", unique(newLabel7))))])
+
+tiff("output/figures/sc_plaque_cluster_7.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+print(plotCluster7)
+
+dev.off()
+```
+
 ## Format files for Scaden
 
 For the deconvolution method "Scaden", the input files need to be correctly formatted. For detailed instructions, see the [Scaden documentation page](https://scaden.readthedocs.io/en/latest/index.html).
@@ -269,22 +352,35 @@ For the deconvolution method "Scaden", the input files need to be correctly form
 scCounts <- as.data.frame(scFinal[["RNA"]]$counts) %>%
   t()
 
-View(head(scCounts))
-
 #Check if the rownames of the two data frames are in the same order.
-table(rownames(scCounts) == rownames(scCellTypes))
+table(rownames(scCounts) == rownames(scCellTypes21))
 
-write.table(scCellTypes,
-            file = "output/scaden_format_files/scaden_celltypes.txt",
-            sep = "\t", row.names = FALSE)
+seqClustering <- list(7, 11, 21)
+
+for(i in seqClustering){
+  df <- paste0("scCellTypes", i)
+  path <- paste0("output/scaden_format_files/cluster_", i,"/scaden_celltypes.txt")
+  
+  write.table(get(df),
+              file = path,
+              sep = "\t", row.names = FALSE)
+}
 
 write.table(scCounts,
-            file = "output/scaden_format_files/scaden_counts.txt",
+            file = "output/scaden_format_files/cluster_21/scaden_counts.txt",
             sep = "\t", row.names = FALSE)
 
+file.copy("output/scaden_format_files/cluster_21/scaden_counts.txt",
+          "output/scaden_format_files/cluster_11/scaden_counts.txt")
+
+file.copy("output/scaden_format_files/cluster_21/scaden_counts.txt",
+          "output/scaden_format_files/cluster_7/scaden_counts.txt")
+  
 write.table(bulkFinal,
             file = "output/scaden_format_files/scaden_bulk_data.txt",
             sep = "\t")
+
+
 ```
 
 ## Format files for BayesPrism
@@ -302,7 +398,67 @@ file_copy("output/scaden_format_files/scaden_counts.txt",
           overwrite = FALSE)
 ```
 
-### Session info
+## scRNA dataset - Neutrophils
+
+```{r}
+dataDir <- "input/Alsaigh_2020_scRNA"
+list.files(dataDir) # Should show barcodes.tsv.gz, features.tsv.gz, and matrix.mtx.gz
+data <- Read10X(data.dir = dataDir)
+seurat_object = CreateSeuratObject(counts = data)
+seurat_object[['Protein']] = CreateAssayObject(counts = data$`Antibody Capture`)
+
+V
+
+dataDir <- "input/Alsaigh_2020_scRNA"
+list.files(dataDir) # Should show barcodes.tsv.gz, features.tsv.gz, and matrix.mtx.gz
+data <- Read10X(data.dir = dataDir)
+seurat_object = CreateSeuratObject(counts = data)
+seurat_object[['Protein']] = CreateAssayObject(counts = data$`Antibody Capture`)
+
+library(GEOquery)
+library(Seurat)
+gse <- getGEO("GSE159677")
+
+# Read in raw data from each GSM folder
+dataSamples <- "input/Alsaigh_2020_scRNA/confused"
+dataH5 <- "input/Alsaigh_2020_scRNA/h5"
+list_of_samples <- list.files(dataSamples)
+
+# Create a list to store Seurat objects for each sample
+list_of_seurat_objects <- list()
+
+for(sample_dir in list_of_samples){
+  
+}
+
+for (sample_dir in list_of_samples) {
+    # Read raw data files for each sample
+    raw_data <- Read10X(sample_dir)
+    
+    # Create Seurat object
+    seurat_obj <- CreateSeuratObject(counts = raw_data)
+
+    
+    # Store Seurat object in list
+    list_of_seurat_objects[[sample_dir]] <- seurat_obj
+}
+
+    
+    # Optionally, add metadata if available
+    metadata <- Read10X_h5(sample_dir)
+    seurat_obj <- AddMetaData(object = seurat_obj, metadata = metadata)
+
+# Optionally, merge Seurat objects if needed
+merged_seurat_obj <- MergeSeurat(list_of_seurat_objects)
+
+# Perform further analysis with the merged Seurat object
+
+
+library(rhdf5)
+data_h5 <- h5read("input/Alrasih_2020_scRNA/confused/GSM4837523_02dat20190515tisCARconDIS_moleculeinfo.h5")
+```
+
+## Session info
 
 ```{r}
 devtools::session_info()
