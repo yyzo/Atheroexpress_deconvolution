@@ -25,6 +25,7 @@ library(rstudioapi)
 library(fs)
 
 setwd(dirname(getActiveDocumentContext()$path))
+source("functions/functions_R.R")
 ```
 
 ## Data processing
@@ -170,23 +171,11 @@ scFinal <- subset(scFilter, idents = aboveThreshold)
 #Remove redundant Seurat objects in order to free up space.
 rm(scData, scFilter, bulkData, bulkFilter, counts, countsKeep, completeHGNC, ncRNA)
 gc()
-
-rm(data, seurat_object)
 ```
 
 #### Clustering
 
 The final scRNA-sequencing dataset contains 21 cell types. How these cell types are clustered can be seen in the UMAP plot below.
-
-```{r}
-#Seurat clusters
-numLevels <- as.character(1:21)
-
-names(numLevels) <- levels(scFinal)
-
-scRename <- RenameIdents(scFinal, numLevels)
-levels(scFinal)
-```
 
 ```{r}
 scRename <- scFinal
@@ -233,9 +222,7 @@ plotCluster21 <- DimPlot(scRename,
         legend.text = element_text(size = 15)) +
   guides(color = guide_legend(override.aes = list(size=4), ncol=1)) +
   scale_color_discrete(labels = unique(newLabel)[order(as.numeric(gsub(":.*", "", unique(newLabel))))])
-```
 
-```{r}
 tiff("output/figures/sc_plaque_cluster_21.tiff",
      width = 1280,
      height = 720,
@@ -370,8 +357,8 @@ write.table(scCounts,
             file = "output/scaden_format_files/cluster_21/scaden_counts.txt",
             sep = "\t", row.names = FALSE)
 
-file.copy("output/scaden_format_files/cluster_21/scaden_counts.txt",
-          "output/scaden_format_files/cluster_11/scaden_counts.txt")
+# file.copy("output/scaden_format_files/cluster_21/scaden_counts.txt",
+#           "output/scaden_format_files/cluster_11/scaden_counts.txt")
 
 file.copy("output/scaden_format_files/cluster_21/scaden_counts.txt",
           "output/scaden_format_files/cluster_7/scaden_counts.txt")
@@ -381,21 +368,6 @@ write.table(bulkFinal,
             sep = "\t")
 
 
-```
-
-## Format files for BayesPrism
-
-```{r}
-bayesPrismBulk <- bulkFinal %>%
-  t()
-
-write.table(bayesPrismBulk,
-            file = "output/bayesPrism_format_files/bayesPrism_bulk_data.txt",
-            sep = "\t")
-
-file_copy("output/scaden_format_files/scaden_counts.txt",
-          "output/bayesPrism_format_files/bayesPrism_counts.txt",
-          overwrite = FALSE)
 ```
 
 ## scRNA dataset - Neutrophils
@@ -456,6 +428,62 @@ merged_seurat_obj <- MergeSeurat(list_of_seurat_objects)
 
 library(rhdf5)
 data_h5 <- h5read("input/Alrasih_2020_scRNA/confused/GSM4837523_02dat20190515tisCARconDIS_moleculeinfo.h5")
+```
+
+## Format files for Scaden - patient characteristics
+
+```{r}
+#Match patients of patientData to bulkFinal and add a new column Symptoms.2g
+patientData <- haven::read_sav("input/AEdata03082023.sav")
+
+patientData$STUDY_NUMBER <- gsub("^", "ae", patientData$STUDY_NUMBER)
+
+patientBulk <- patientData %>%
+  filter(STUDY_NUMBER %in% colnames(bulkFinal)) %>%
+  select(STUDY_NUMBER, dateok, Symptoms.4g) %>%
+  na.omit()
+
+patientBulk["Symptoms.2g"] <- case_when(patientBulk$Symptoms.4g == 0 | patientBulk$Symptoms.4g == 1~"mild",
+                                            patientBulk$Symptoms.4g == 2 | patientBulk$Symptoms.4g == 3~"severe")
+
+#Separate dataframes for Symptoms.4g
+patient4g <- purrr::map(0:3, ~ filterPatients(patientBulk, Symptoms.4g == .x, STUDY_NUMBER))
+
+bulkSympt4g0 <- bulkFinal[, colnames(bulkFinal) %in% patient4g[[1]]]
+bulkSympt4g1 <- bulkFinal[, colnames(bulkFinal) %in% patient4g[[2]]]
+bulkSympt4g2 <- bulkFinal[, colnames(bulkFinal) %in% patient4g[[3]]]
+bulkSympt4g3 <- bulkFinal[, colnames(bulkFinal) %in% patient4g[[4]]]
+
+
+write.table(bulkSympt4g0,
+            file = "output/scaden_format_files/scaden_bulk_data_sympt4g_0.txt",
+            sep = "\t")
+
+write.table(bulkSympt4g1,
+            file = "output/scaden_format_files/scaden_bulk_data_sympt4g_1.txt",
+            sep = "\t")
+
+write.table(bulkSympt4g2,
+            file = "output/scaden_format_files/scaden_bulk_data_sympt4g_2.txt",
+            sep = "\t")
+
+write.table(bulkSympt4g3,
+            file = "output/scaden_format_files/scaden_bulk_data_sympt4g_3.txt",
+            sep = "\t")
+
+#Separate dataframes for Symptoms.2g
+patient2g <- purrr::map(c("mild", "severe"), ~ filterPatients(patientBulk, Symptoms.2g == .x, STUDY_NUMBER))
+
+bulkSympt2gMild <- bulkFinal[, colnames(bulkFinal) %in% patient2g[[1]]]
+bulkSympt2gSevere <- bulkFinal[, colnames(bulkFinal) %in% patient2g[[2]]]
+
+write.table(bulkSympt2gMild,
+            file = "output/scaden_format_files/scaden_bulk_data_sympt2g_mild.txt",
+            sep = "\t")
+
+write.table(bulkSympt2gSevere,
+            file = "output/scaden_format_files/scaden_bulk_data_sympt2g_severe.txt",
+            sep = "\t")
 ```
 
 ## Session info
