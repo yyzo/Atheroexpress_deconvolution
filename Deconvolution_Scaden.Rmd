@@ -18,7 +18,6 @@ Creating pseudo bulk mixtures for training of the algorithm and performing the d
 ```{r message=FALSE, warning=FALSE}
 library(magrittr)
 library(tidyverse)
-library(ggthemes)
 ```
 
 ## Deconvolution with Scaden
@@ -26,14 +25,14 @@ library(ggthemes)
 ### Example datasets
 
 ```{r}
-exampleBulk <- read.table("example_data/example_bulk_data.txt")
-exampleCellTypes <- read.table("example_data/example_celltypes.txt")
-exampleCounts <- read_table("example_data/example_counts.txt")
+# exampleBulk <- read.table("example_data/example_bulk_data.txt")
+# exampleCellTypes <- read.table("example_data/example_celltypes.txt")
+# exampleCounts <- read_table("example_data/example_counts.txt")
 ```
 
 ```{bash}
-scaden simulate --data example_data/ -n 100 --pattern "*_counts.txt"
-
+#scaden simulate --data example_data/ -n 100 --pattern "*_counts.txt"
+#
 # scaden process data.h5ad example_data/example_bulk_data.txt --processed_path example_data/processed.h5ad
 # 
 # scaden train example_data/processed.h5ad --steps 5000 --model_dir model
@@ -44,90 +43,131 @@ scaden simulate --data example_data/ -n 100 --pattern "*_counts.txt"
 ### AtheroExpress data
 
 ```{r}
-scadenBulk <- read.delim("output/scaden_format_files/scaden_bulk_data.txt")
-scadenCounts <- read.delim("output/scaden_format_files/cluster_21/scaden_counts.txt")
-scadenCellTypes21 <- read.delim("output/scaden_format_files/cluster_21/scaden_celltypes.txt")
+# scadenBulk <- read.delim("output/scaden_format_files/scaden_bulk_data.txt")
+# scadenCounts <- read.delim("output/scaden_format_files/cluster_21/scaden_counts.txt")
+# scadenCellTypes21 <- read.delim("output/scaden_format_files/cluster_21/scaden_celltypes.txt")
 ```
 
 #### With variable training data + clustered cell types
 
 ```{bash}
-source functions/functions_bash.sh
-set -e
-
-bk="1500" #Number of bulk RNA-seq samples to be simulated.
-ct="7" #Amount of celltypes defined.
-
-dirPathFiles="output/scaden_format_files/plaque_cluster_${ct}/"
-
-dirPathOutput="output/scaden_simulations_plaque/cluster_${ct}/scaden_plaque_b${bk}_c${ct}/plaque_b${bk}_c${ct}_"
-dirPathPred="output/scaden_simulations_plaque/cluster_${ct}/scaden_plaque_b${bk}_c${ct}/predictions"
-
-dirPathModel="output/scaden_models_plaque/cluster_${ct}/scaden_models_plaque_b${bk}_c${ct}/model_plaque_b${bk}_c${ct}_"
-
-
-createDir "output/scaden_simulations_plaque/cluster_${ct}"
-createDir "output/scaden_simulations_plaque/cluster_${ct}/scaden_plaque_b${bk}_c${ct}"
-createDir ${dirPathPred} 
-
-createDir "output/scaden_models_plaque/cluster_${ct}"
-createDir "output/scaden_models_plaque/cluster_${ct}/scaden_models_plaque_b${bk}_c${ct}"
-           
-for i in {16..30}
-do
-  createDir ${dirPathOutput}${i}
-  
-  scaden simulate --data ${dirPathFiles} -n $bk --pattern "*_counts.txt" --out ${dirPathOutput}${i}
-
-  scaden process ${dirPathOutput}${i}/scaden.h5ad output/scaden_format_files/scaden_bulk_data.txt --processed_path ${dirPathOutput}${i}/processed.h5ad
-
-  createDir ${dirPathModel}${i}
-
-  scaden train ${dirPathOutput}${i}/processed.h5ad --steps 5000 --model_dir ${dirPathModel}${i}
-
-  scaden predict --model_dir ${dirPathModel}${i} output/scaden_format_files/scaden_bulk_data.txt --outname predictions_plaque_b${bk}_c${ct}_${i}
-
-  mv predictions_plaque_b${bk}_c${ct}_${i} ${dirPathPred}
-done
+# source functions/functions_bash.sh
+# set -e
+# 
+# bk="1500" #Number of bulk RNA-seq samples to be simulated.
+# ct="7" #Amount of celltypes defined.
+# 
+# dirPathFiles="output/scaden_format_files/plaque_cluster_${ct}/"
+# 
+# dirPathOutput="output/scaden_simulations_plaque/cluster_${ct}/scaden_plaque_b${bk}_c${ct}/plaque_b${bk}_c${ct}_"
+# dirPathPred="output/scaden_simulations_plaque/cluster_${ct}/scaden_plaque_b${bk}_c${ct}/predictions"
+# 
+# dirPathModel="output/scaden_models_plaque/cluster_${ct}/scaden_models_plaque_b${bk}_c${ct}/model_plaque_b${bk}_c${ct}_"
+# 
+# 
+# createDir "output/scaden_simulations_plaque/cluster_${ct}"
+# createDir "output/scaden_simulations_plaque/cluster_${ct}/scaden_plaque_b${bk}_c${ct}"
+# createDir ${dirPathPred} 
+# 
+# createDir "output/scaden_models_plaque/cluster_${ct}"
+# createDir "output/scaden_models_plaque/cluster_${ct}/scaden_models_plaque_b${bk}_c${ct}"
+#            
+# for i in {16..30}
+# do
+#   createDir ${dirPathOutput}${i}
+#   
+#   scaden simulate --data ${dirPathFiles} -n $bk --pattern "*_counts.txt" --out ${dirPathOutput}${i}
+# 
+#   scaden process ${dirPathOutput}${i}/scaden.h5ad output/scaden_format_files/scaden_bulk_data.txt --processed_path ${dirPathOutput}${i}/processed.h5ad
+# 
+#   createDir ${dirPathModel}${i}
+# 
+#   scaden train ${dirPathOutput}${i}/processed.h5ad --steps 5000 --model_dir ${dirPathModel}${i}
+# 
+#   scaden predict --model_dir ${dirPathModel}${i} output/scaden_format_files/scaden_bulk_data.txt --outname predictions_plaque_b${bk}_c${ct}_${i}
+# 
+#   mv predictions_plaque_b${bk}_c${ct}_${i} ${dirPathPred}
+# done
 ```
 
 #### With variable clustered cell types
 
 ```{bash}
+# source functions/functions_bash.sh
+# set -e
+# 
+# bk="1500" #Number of bulk RNA-seq samples to be simulated.
+# ct="7" #Amount of celltypes defined.
+# 
+# dirPathFiles="output/scaden_format_files/plaque_cluster_${ct}/"
+# 
+# dirPathOutput="output/scaden_simulations_plaque/cluster_${ct}/plaque_b${bk}_c${ct}_"
+# dirPathPred="output/scaden_simulations_plaque/cluster_${ct}/predictions"
+# 
+# dirPathModel="output/scaden_models_plaque/cluster_${ct}/model_plaque_b${bk}_c${ct}_"
+# 
+# 
+# createDir "output/scaden_simulations_plaque/cluster_${ct}"
+# createDir ${dirPathPred} 
+# 
+# createDir "output/scaden_models_plaque/cluster_${ct}"
+#            
+# for i in {16..30}
+# do
+#   createDir ${dirPathOutput}${i}
+#   
+#   scaden simulate --data ${dirPathFiles} -n $bk --pattern "*_counts.txt" --out ${dirPathOutput}${i}
+# 
+#   scaden process ${dirPathOutput}${i}/scaden.h5ad output/scaden_format_files/scaden_bulk_data.txt --processed_path ${dirPathOutput}${i}/processed.h5ad
+# 
+#   createDir ${dirPathModel}${i}
+# 
+#   scaden train ${dirPathOutput}${i}/processed.h5ad --steps 5000 --model_dir ${dirPathModel}${i}
+# 
+#   scaden predict --model_dir ${dirPathModel}${i} output/scaden_format_files/scaden_bulk_data.txt --outname predictions_plaque_b${bk}_c${ct}_${i}
+# 
+#   mv predictions_plaque_b${bk}_c${ct}_${i} ${dirPathPred}
+# done
+```
+
+#### Variable cell types and bulk data file
+
+```{bash}
 source functions/functions_bash.sh
 set -e
 
-bk="1500" #Number of bulk RNA-seq samples to be simulated.
+#Variables
+bk="10" #Size of simulated bulk RNA-sequencing training set.
 ct="7" #Amount of celltypes defined.
+patientChar="sympt4g_0"
 
-dirPathFiles="output/scaden_format_files/plaque_cluster_${ct}/"
-
-dirPathOutput="output/scaden_simulations_plaque/cluster_${ct}/plaque_b${bk}_c${ct}_"
-dirPathPred="output/scaden_simulations_plaque/cluster_${ct}/predictions"
-
-dirPathModel="output/scaden_models_plaque/cluster_${ct}/model_plaque_b${bk}_c${ct}_"
-
+#Paths to save output
+dirPathFiles="output/scaden_format_files/plaque_cluster_${ct}"
+dirPathSimul="output/scaden_simulations_plaque/cluster_${ct}/${patientChar}/plaque_b${bk}_c${ct}_"
+dirPathModel="output/scaden_simulations_plaque/cluster_${ct}/${patientChar}/models/model_plaque_b${bk}_c${ct}_"
+dirPathPred="output/scaden_simulations_plaque/cluster_${ct}/${patientChar}/predictions"
 
 createDir "output/scaden_simulations_plaque/cluster_${ct}"
-createDir ${dirPathPred} 
+createDir "output/scaden_simulations_plaque/cluster_${ct}/${patientChar}"
+createDir "output/scaden_simulations_plaque/cluster_${ct}/${patientChar}/models"
+createDir "${dirPathPred}"
 
-createDir "output/scaden_models_plaque/cluster_${ct}"
-           
-for i in {16..30}
+#Run Scaden 
+for i in {1..2}
 do
-  createDir ${dirPathOutput}${i}
-  
-  scaden simulate --data ${dirPathFiles} -n $bk --pattern "*_counts.txt" --out ${dirPathOutput}${i}
+  createDir "${dirPathSimul}${i}"
 
-  scaden process ${dirPathOutput}${i}/scaden.h5ad output/scaden_format_files/scaden_bulk_data.txt --processed_path ${dirPathOutput}${i}/processed.h5ad
+  scaden simulate --data "${dirPathFiles}" -n $bk --pattern "*_counts.txt" --out "${dirPathSimul}${i}"
 
-  createDir ${dirPathModel}${i}
+  scaden process "${dirPathSimul}${i}/scaden.h5ad" "output/scaden_format_files/scaden_bulk_data_${patientChar}.txt" --processed_path "${dirPathSimul}${i}/processed.h5ad"
 
-  scaden train ${dirPathOutput}${i}/processed.h5ad --steps 5000 --model_dir ${dirPathModel}${i}
+  createDir "${dirPathModel}${i}"
 
-  scaden predict --model_dir ${dirPathModel}${i} output/scaden_format_files/scaden_bulk_data.txt --outname predictions_plaque_b${bk}_c${ct}_${i}
+  scaden train "${dirPathSimul}${i}/processed.h5ad" --steps 100 --model_dir "${dirPathModel}${i}"
 
-  mv predictions_plaque_b${bk}_c${ct}_${i} ${dirPathPred}
+  scaden predict --model_dir "${dirPathModel}${i}" "output/scaden_format_files/scaden_bulk_data_${patientChar}.txt" --outname "predictions_plaque_b${bk}_c${ct}_${i}"
+
+  mv "predictions_plaque_b${bk}_c${ct}_${i}" "${dirPathPred}"
 done
 ```
 
@@ -136,18 +176,18 @@ done
 ### Example prediction
 
 ```{r}
-examplePrediction <- read.table("example_data/example_predictions.txt")
-
-longExample <- examplePrediction %>%
-  rownames_to_column("Sample") %>%
-  pivot_longer(
-             cols = -Sample,
-             names_to = "Celltype",
-             values_to = "Proportion"
-  )
-
-ggplot(longExample, aes(x = Celltype, y = Proportion)) +
-  geom_boxplot()
+# examplePrediction <- read.table("example_data/example_predictions.txt")
+# 
+# longExample <- examplePrediction %>%
+#   rownames_to_column("Sample") %>%
+#   pivot_longer(
+#              cols = -Sample,
+#              names_to = "Celltype",
+#              values_to = "Proportion"
+#   )
+# 
+# ggplot(longExample, aes(x = Celltype, y = Proportion)) +
+#   geom_boxplot()
 ```
 
 ### AtheroExpress predictions
