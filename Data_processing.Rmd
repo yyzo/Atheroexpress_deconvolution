@@ -16,35 +16,46 @@ knitr::opts_chunk$set(echo = TRUE)
 ### Setup
 
 ```{r message=FALSE, warning=FALSE}
-library(magrittr)
-library(tidyverse)
-library(Seurat)
 library(Biobase)
-library(stringr)
-library(rstudioapi)
 library(fs)
+library(magrittr)
+library(rstudioapi)
+library(Seurat)
+library(stringr)
+library(tidyverse)
+
+source("functions/functions_R.R")
 
 setwd(dirname(getActiveDocumentContext()$path))
-source("functions/functions_R.R")
 ```
 
 ## Data processing
 
-### Bulk RNA-sequencing (RNA-seq) data
+### Description data collection
+
+| Data                            | Source                                                                                                                                                | Download date (dd/mm/yyyy) |
+|---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------|
+| Bulk RNA-sequencing data        | In-house                                                                                                                                              | 16/01/2024                 |
+| HGNC complete set               | HGNC ([URL](HGNC%20https://ftp.ebi.ac.uk/pub/databases/genenames/hgnc/archive/monthly/tsv/hgnc_complete_set_2024-01-01.txt))                          | 16/01/2024                 |
+| Non-coding RNA list             | HGNC, filtered on non-coding RNA ([URL](https://www.genenames.org/tools/search/#!/?query=&rows=20&start=0&filter=locus_group:%22Non-coding%20RNA%22)) | 16/01/2024                 |
+| Single cell RNA-sequencing data | In-house                                                                                                                                              | 17/01/2024                 |
+| AtheroExpress data              | In-house                                                                                                                                              | 15/03/2024                 |
+
+### Match bulk RNA-sequencing data and single cell RNA-sequencing data
+
+In this section, both the bulk RNA-sequencing (bulk RNA-seq) and single cell RNA-sequencing (scRNA-seq) datasets will be processed to ensure they contain identical sets of genes.
 
 #### Importing files
 
-The HGNC complete set has been downloaded on 16/01/2024 from <https://ftp.ebi.ac.uk/pub/databases/genenames/hgnc/archive/monthly/tsv/hgnc_complete_set_2024-01-01.txt>. The list of non-coding RNA is obtained from <https://www.genenames.org/tools/search/#!/?query=&rows=20&start=0&filter=locus_group:%22Non-coding%20RNA%22>, which is filtered by the non-coding RNA. The file used below has been downloaded on 16/01/2024.
-
 ```{r message=FALSE, warning=FALSE}
 bulkData <- read_delim("input/AE_bulk_RNA_batch1.minRib.PC_07042023.txt")
-
 completeHGNC <- read_delim("input/hgnc_complete_set.txt")
-
 ncRNA <- read_delim("input/HGNC_NonCodingRNA.txt")
+
+scData <- subset(read_rds("input/full.43p_10X.integrated.cleaned.archetypes.seurat.RDS"), Tissue != "PBMC")
 ```
 
-#### Preparing data
+#### Integration gene symbols and filtering non-coding RNA
 
 First, gene symbols will be added to the dataset from the HGNC complete archive. Consequently, genes will be removed of which the Ensembl gene ID is not found in this archive and are non-coding RNA.
 
@@ -57,33 +68,11 @@ bulkFilter <- bulkData %>%
   filter(!(symbol %in% ncRNA$Symbol))
 ```
 
-The bulk RNA-seq dataset has been reduced from 21835 to 19214 genes. In the section below ("Filter genes"), it will be further reduced as to gain a set of genes that is present in both the bulk RNA-seq and the scRNA-seq dataset.
+The bulk RNA-seq dataset has been reduced from 21835 to 19214 genes.
 
-### Single cell RNA-sequencing (scRNA-seq) data
+#### Matching genes
 
-#### Importing files
-
-From the file, the PBMC data is removed leaving only the data pertaining the atherosclerotic plaques.
-
-```{r}
-scData <- subset(read_rds("input/full.43p_10X.integrated.cleaned.archetypes.seurat.RDS"), Tissue != "PBMC")
-```
-
-#### Filter genes
-
-As the total number of genes in the scRNA-seq dataset (24691 genes) differs from the total in the bulk RNA-seq dataset (19214 genes), it is necessary to ensure that both datasets contain the same set of genes. It enables robust comparisons between the datasets.
-
-Before that, the scRNA-seq dataset will be checked for genes that are not present in the HGNC archive.
-
-```{r}
-sum(!(Features(scData) %in% completeHGNC$symbol))
-
-sum(setdiff(Features(scData), completeHGNC$symbol) %in% bulkFilter$symbol)
-```
-
-4122 genes in the scRNA-seq dataset are not present in the HGNC archive. However, these genes are also not present in the bulk RNA-seq dataset. Therefore, we don't need to filter these genes out in this step.
-
-Now, genes are removed from the scRNA-seq dataset that are directly not found in the bulk RNA-seq dataset.
+Genes are removed from the scRNA-seq dataset which are not found in the bulk RNA-seq dataset.
 
 ```{r}
 DefaultAssay(scData) <- "RNA"
@@ -103,7 +92,7 @@ countsKeep <- counts[which(rownames(counts) %in% toKeep),]
 scFilter <- subset(scData, features = rownames(countsKeep))
 ```
 
-This leaves us with two datasets both containing 18114 genes.
+Now, both the bulk RNA-seq and scRNA-seq datasets each comprise 18114 genes.
 
 Below, we check the relationship between the total counts and the number of expressed genes in the individual cells.
 
@@ -336,7 +325,7 @@ dev.off()
 For the deconvolution method "Scaden", the input files need to be correctly formatted. For detailed instructions, see the [Scaden documentation page](https://scaden.readthedocs.io/en/latest/index.html).
 
 ```{r message=FALSE, warning=FALSE}
-scCounts <- as.data.frame(scFinal[["RNA"]]$counts) %>%
+scCounts <- as.data.frame(counts) %>%
   t()
 
 #Check if the rownames of the two data frames are in the same order.
@@ -368,122 +357,6 @@ write.table(bulkFinal,
             sep = "\t")
 
 
-```
-
-## scRNA dataset - Neutrophils
-
-```{r}
-dataDir <- "input/Alsaigh_2020_scRNA"
-list.files(dataDir) # Should show barcodes.tsv.gz, features.tsv.gz, and matrix.mtx.gz
-data <- Read10X(data.dir = dataDir)
-seurat_object = CreateSeuratObject(counts = data)
-seurat_object[['Protein']] = CreateAssayObject(counts = data$`Antibody Capture`)
-
-V
-
-dataDir <- "input/Alsaigh_2020_scRNA"
-list.files(dataDir) # Should show barcodes.tsv.gz, features.tsv.gz, and matrix.mtx.gz
-data <- Read10X(data.dir = dataDir)
-seurat_object = CreateSeuratObject(counts = data)
-seurat_object[['Protein']] = CreateAssayObject(counts = data$`Antibody Capture`)
-
-library(GEOquery)
-library(Seurat)
-gse <- getGEO("GSE159677")
-
-# Read in raw data from each GSM folder
-dataSamples <- "input/Alsaigh_2020_scRNA/confused"
-dataH5 <- "input/Alsaigh_2020_scRNA/h5"
-list_of_samples <- list.files(dataSamples)
-
-# Create a list to store Seurat objects for each sample
-list_of_seurat_objects <- list()
-
-for(sample_dir in list_of_samples){
-  
-}
-
-for (sample_dir in list_of_samples) {
-    # Read raw data files for each sample
-    raw_data <- Read10X(sample_dir)
-    
-    # Create Seurat object
-    seurat_obj <- CreateSeuratObject(counts = raw_data)
-
-    
-    # Store Seurat object in list
-    list_of_seurat_objects[[sample_dir]] <- seurat_obj
-}
-
-    
-    # Optionally, add metadata if available
-    metadata <- Read10X_h5(sample_dir)
-    seurat_obj <- AddMetaData(object = seurat_obj, metadata = metadata)
-
-# Optionally, merge Seurat objects if needed
-merged_seurat_obj <- MergeSeurat(list_of_seurat_objects)
-
-# Perform further analysis with the merged Seurat object
-
-
-library(rhdf5)
-data_h5 <- h5read("input/Alrasih_2020_scRNA/confused/GSM4837523_02dat20190515tisCARconDIS_moleculeinfo.h5")
-```
-
-## Format files for Scaden - patient characteristics
-
-```{r}
-#Match patients of patientData to bulkFinal and add a new column Symptoms.2g
-patientData <- haven::read_sav("input/AEdata03082023.sav")
-
-patientData$STUDY_NUMBER <- gsub("^", "ae", patientData$STUDY_NUMBER)
-
-patientBulk <- patientData %>%
-  filter(STUDY_NUMBER %in% colnames(bulkFinal)) %>%
-  select(STUDY_NUMBER, dateok, Symptoms.4g) %>%
-  na.omit()
-
-patientBulk["Symptoms.2g"] <- case_when(patientBulk$Symptoms.4g == 0 | patientBulk$Symptoms.4g == 1~"mild",
-                                            patientBulk$Symptoms.4g == 2 | patientBulk$Symptoms.4g == 3~"severe")
-
-#Separate dataframes for Symptoms.4g
-patient4g <- purrr::map(0:3, ~ filterPatients(patientBulk, Symptoms.4g == .x, STUDY_NUMBER))
-
-bulkSympt4g0 <- bulkFinal[, colnames(bulkFinal) %in% patient4g[[1]]]
-bulkSympt4g1 <- bulkFinal[, colnames(bulkFinal) %in% patient4g[[2]]]
-bulkSympt4g2 <- bulkFinal[, colnames(bulkFinal) %in% patient4g[[3]]]
-bulkSympt4g3 <- bulkFinal[, colnames(bulkFinal) %in% patient4g[[4]]]
-
-
-write.table(bulkSympt4g0,
-            file = "output/scaden_format_files/scaden_bulk_data_sympt4g_0.txt",
-            sep = "\t")
-
-write.table(bulkSympt4g1,
-            file = "output/scaden_format_files/scaden_bulk_data_sympt4g_1.txt",
-            sep = "\t")
-
-write.table(bulkSympt4g2,
-            file = "output/scaden_format_files/scaden_bulk_data_sympt4g_2.txt",
-            sep = "\t")
-
-write.table(bulkSympt4g3,
-            file = "output/scaden_format_files/scaden_bulk_data_sympt4g_3.txt",
-            sep = "\t")
-
-#Separate dataframes for Symptoms.2g
-patient2g <- purrr::map(c("mild", "severe"), ~ filterPatients(patientBulk, Symptoms.2g == .x, STUDY_NUMBER))
-
-bulkSympt2gMild <- bulkFinal[, colnames(bulkFinal) %in% patient2g[[1]]]
-bulkSympt2gSevere <- bulkFinal[, colnames(bulkFinal) %in% patient2g[[2]]]
-
-write.table(bulkSympt2gMild,
-            file = "output/scaden_format_files/scaden_bulk_data_sympt2g_mild.txt",
-            sep = "\t")
-
-write.table(bulkSympt2gSevere,
-            file = "output/scaden_format_files/scaden_bulk_data_sympt2g_severe.txt",
-            sep = "\t")
 ```
 
 ## Session info
