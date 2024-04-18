@@ -24,50 +24,39 @@ source("functions/functions_R.R")
 
 ## Deconvolution with Scaden
 
-```{python}
-import scaden
-
-from scaden.train import training
-from scaden.predict import prediction
-from scaden.process import processing
-from scaden.simulate import simulation
-
-for i in range(1):
-  simulation(sample_size = 100, num_samples = 1500, pattern = "*_counts.txt", unknown_celltypes = "unknown", out_prefix = "data", fmt = "txt", data_dir = "output/scaden_plaque/format_files/", simulate_dir = "output/scaden_plaque/simulated_data/")
-
-```
-
-```{bash}
+```{sh}
+source functions/functions_bash.sh
 set -e
 
-#Paths
-dirPathFiles="output/scaden_plaque/format_files/"
-dirPathSimul="output/scaden_plaque/simulated_data/"
-dirPathModel="output/scaden_plaque/trained_models/"
-dirPathPred="output/scaden_plaque/predictions/"
+typeDeconv="scaden_plaque"
 
-#Run Scaden 
-for i in {1..2}
+dirPathFiles="output/$typeDeconv/format_files/"
+dirPathSimul="output/$typeDeconv/simulated_data/"
+dirPathModel="output/$typeDeconv/trained_models/"
+dirPathPred="output/$typeDeconv/predictions/"
+
+for i in {1..30}
 do
-  scaden simulate -n 10 --pattern "*_counts.txt" --data ${dirPathFiles} --out ${dirPathSimul}
+  scaden simulate -n 10 --pattern "*_counts.txt" --data $dirPathFiles --out $dirPathSimul
+  
+    scaden process "$dirPathSimul/scaden.h5ad" "$dirPathFiles/scaden_bulk_data.txt" --processed_path "$dirPathSimul/processed.h5ad"
+
+  scaden train "$dirPathSimul/processed.h5ad" --steps 10 --model_dir $dirPathModel
+
+  scaden predict --model_dir $dirPathModel "$dirPathFiles/scaden_bulk_data.txt" --outname "predictions_${typeDeconv}_b1500_c7_$i"
+
+  mv "predictions_${typeDeconv}_b1500_c7_$i" $dirPathPred
+  
+  echo "Moved predictions_${typeDeconv}_b1500_c7_$i to $dirPathPred"
+  
+  emptyDir $dirPathSimul $i
+  
+  emptyDir $dirPathModel $i
 done
 ```
 
-```{bash}
-source functions/functions_bash.sh
-
-  scaden process ${dirPathSimul}"/scaden.h5ad" "output/scaden_format_files/scaden_bulk_data_${patientType}.txt" --processed_path ${dirPathSimul}"/processed.h5ad"
-
-  scaden train ${dirPathSimul}"/processed.h5ad" --steps 5000 --model_dir ${dirPathModel}
-
-  scaden predict --model_dir ${dirPathModel} "output/scaden_format_files/scaden_bulk_data_${patientType}.txt" --outname "predictions_plaque_${patientType}_c${ct}_${i}"
-
-  mv "predictions_plaque_${patientType}_c${ct}_${i}" ${dirPathPred}
-  
-```
-
-```{bash}
-scaden simulate --help
+```{bash, engine.opts='l'}
+source ~/.bashrc
 ```
 
 ## Plotting predictions
@@ -77,10 +66,11 @@ scaden simulate --help
 Obtain average proportions:
 
 ```{r}
+typeDeconv = "scaden_plaque"
 nSimulations = seq(30)
 
 for(i in nSimulations){
-  path <- paste0("output/scaden_plaque/predictions/predictions_plaque_b1500_c7_", i)
+  path <- paste0("output/", typeDeconv, "/predictions/predictions", typeDeconv, "_b1500_c7_", i)
   file <- paste0("pred", i)
   
   assign(file, read.delim(path,
@@ -101,19 +91,27 @@ avgProp <- as.data.frame(longPred1[1:2])
 
 for(n in nSimulations){
   avgProp <- left_join(avgProp, 
-                       get(paste0("longPred", i)), 
+                       get(paste0("longPred", n)), 
                        by = c("Patient", "Celltype"))
 }
 
 avgProp$`Average proportion` <- rowMeans(avgProp[, 3:ncol(avgProp)])
+
 avgProp <- select(avgProp, Patient, Celltype, `Average proportion`)
+
+# exportAvgProp <- pivot_wider(avgProp,
+#                              names_from = "Celltype",
+#                              values_from = "Average proportion")
+# 
+# write_excel_csv(exportAvgProp, 
+#                 "output/export_files/AE_scaden_deconvolution_plaque_7clusters_avgprop.csv")
 ```
 
 Graphs of all the predictions and average prediction:
 
 ```{r}
 #All predictions
-pdf("output/scaden_plaque/predictions/scaden_plaque_predictions_graphs_all.pdf")
+pdf(paste0("output/", typeDeconv, "/predictions/", typeDeconv, "_predictions_graphs_all.pdf"))
 
 for(k in nSimulations){
   longFile <- paste0("longPred", k)
@@ -130,7 +128,7 @@ for(k in nSimulations){
 dev.off()
 
 #Average prediction
-tiff("output/figures/scaden_plaque_average_all.tiff",
+tiff(paste0("output/figures/", typeDeconv, "_average_all.tiff"),
      width = 720,
      height = 720,
      units = "px")
@@ -187,7 +185,7 @@ avgPropSymp <- avgProp2g %>%
 #### Mild versus severe symptoms
 
 ```{r}
-tiff(paste0("output/figures/scaden_plaque_sympt2g.tiff"),
+tiff(paste0("output/figures/", typeDeconv, "_sympt2g.tiff"),
      width = 720,
      height = 720,
      units = "px")
@@ -211,7 +209,7 @@ dev.off()
 #### Asymptomatic versus ocular versus TIA versus stroke symptoms
 
 ```{r}
-tiff(paste0("output/figures/scaden_plaque_sympt4g.tiff"),
+tiff(paste0("output/figures/", typeDeconv, "_sympt4g.tiff"),
      width = 720,
      height = 720,
      units = "px")
@@ -234,40 +232,46 @@ dev.off()
 
 ## Statistical tests
 
+```{r}
+#Data is skewed to the left.
+ggplot(avgPropSymp, aes(x = Symptoms.2g, y = `Average proportion`, fill = Symptoms.2g)) +
+  geom_boxplot() +
+  labs(x = "Group", 
+       y = "Cellular Proportions")
+
+ggplot(avgPropSymp, aes(x = `Average proportion`, fill = Symptoms.2g)) +
+  geom_histogram(binwidth = 0.1, 
+                 position = "identity", 
+                 alpha = 0.7) +
+  facet_wrap(~Symptoms.2g) +
+  labs(x = "Cellular Proportions", 
+       y = "Frequency")
+
+ggpubr::ggqqplot(avgPropSymp, x = "Average proportion") +
+  labs(x = "Theoretical Quantiles", 
+       y = "Sample Quantiles")
+```
+
 ### Mild versus severe symptoms
 
 ```{r}
-boxplotPlot <- ggplot(avgPropMildSevere, aes(x = Group, y = `Average proportion`, fill = Group)) +
-  geom_boxplot() +
-  labs(x = "Group", y = "Cellular Proportions")
-
-histPlot <- avgPropMildSevere %>%
-  ggplot(aes(x = `Average proportion`, fill = Group)) +
-  geom_histogram(binwidth = 0.1, position = "identity", alpha = 0.7) +
-  facet_wrap(~Group) +
-  labs(x = "Cellular Proportions", y = "Frequency")
-
-qqPlot <- ggqqplot(avgPropMildSevere, x = "Average proportion") +
-  labs(x = "Theoretical Quantiles", y = "Sample Quantiles")
-
-print(boxplotPlot)
-print(histPlot)
-print(qqPlot)
-
-#Test for normality
-shapiro_res <- avgPropMildSevere %>%
-  group_by(Group) %>%
+#Test for normality: no normal distribution.
+resShapiro <- avgPropSymp %>%
+  group_by(Symptoms.2g) %>%
   summarise(p_value = shapiro.test(`Average proportion`)$p.value)
 
-print(shapiro_res)
+print(resShapiro)
 
-#Test for equality of variances
-levene_res <- var.test(`Average proportion` ~ Group, data = avgPropMildSevere)
+#Test for equality of variances: variances are equal.
+resLevene <- var.test(`Average proportion` ~ Symptoms.2g, 
+                      data = avgPropSymp)
 
-print(levene_res)
+print(resLevene)
 
-mwu_res <- wilcox.test(`Average proportion` ~ Group, data = avgPropMildSevere)
-print(mwu_res)
+#Test for differences between groups: no differences with p-value = 0.6846.
+resWilcox <- wilcox.test(`Average proportion` ~ Symptoms.2g, 
+                       data = avgPropSymp)
+print(resWilcox)
 ```
 
 ## Plotting predictions - Gemma
@@ -331,7 +335,7 @@ gemmaPropSymp <- gemmaProp2g %>%
 #### Mild versus severe
 
 ```{r}
-tiff(paste0("output/figures/gemma_plaque_sympt2g.tiff"),
+tiff("output/figures/gemma_plaque_sympt2g.tiff",
      width = 720,
      height = 720,
      units = "px")
@@ -355,7 +359,7 @@ dev.off()
 #### Asymptomatic versus ocular versus TIA versus stroke
 
 ```{r}
-tiff(paste0("output/figures/gemma_plaque_sympt4g.tiff"),
+tiff("output/figures/gemma_plaque_sympt4g.tiff",
      width = 720,
      height = 720,
      units = "px")
@@ -374,6 +378,50 @@ pGemma4g <- ggplot(gemmaPropSymp, aes(x = Celltype, y = `Average proportion`, fi
 print(pGemma4g)
 
 dev.off()
+```
+
+## Statistical tests - Gemma
+
+```{r}
+#Data is skewed to the left.
+ggplot(gemmaPropSymp, aes(x = Symptoms.2g, y = `Average proportion`, fill = Symptoms.2g)) +
+  geom_boxplot() +
+  labs(x = "Group", 
+       y = "Cellular Proportions")
+
+ggplot(gemmaPropSymp, aes(x = `Average proportion`, fill = Symptoms.2g)) +
+  geom_histogram(binwidth = 0.1, 
+                 position = "identity", 
+                 alpha = 0.7) +
+  facet_wrap(~Symptoms.2g) +
+  labs(x = "Cellular Proportions", 
+       y = "Frequency")
+
+ggpubr::ggqqplot(gemmaPropSymp, x = "Average proportion") +
+  labs(x = "Theoretical Quantiles", 
+       y = "Sample Quantiles")
+```
+
+### Mild versus severe
+
+```{r}
+#Test for normality: no normal distribution.
+resShapiroG <- gemmaPropSymp %>%
+  group_by(Symptoms.2g) %>%
+  summarise(p_value = shapiro.test(`Average proportion`)$p.value)
+
+print(resShapiroG)
+
+#Test for equality of variances: variances are equal.
+resLeveneG <- var.test(`Average proportion` ~ Symptoms.2g, 
+                      data = gemmaPropSymp)
+
+print(resLeveneG)
+
+#Test for differences between groups: no differences with p-value = 0.1683.
+resWilcoxG <- wilcox.test(`Average proportion` ~ Symptoms.2g, 
+                       data = gemmaPropSymp)
+print(resWilcoxG)
 ```
 
 ## Correlation plots - predictions own versus Gemma
