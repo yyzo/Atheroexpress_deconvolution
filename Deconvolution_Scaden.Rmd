@@ -22,41 +22,57 @@ library(tidyverse)
 source("functions/functions_R.R")
 ```
 
+## Checking Scaden input files
+
+```{r}
+scadenBulk <- read.delim("output/scaden_plaque/format_files/scaden_bulk_data.txt")
+scadenCounts <- read.delim("output/scaden_plaque/format_files/scaden_counts.txt")
+scadenCellTypes <- read.delim("output/scaden_plaque/format_files/scaden_celltypes.txt")
+
+
+neutBulk <- read.delim("output/scaden_neutrophils/format_files/scadenNeutrophil_bulk_data.txt")
+neutCounts <- read.delim("output/scaden_neutrophils/format_files/scadenNeutrophil_counts.txt")
+neutCellTypes <- read.delim("output/scaden_neutrophils/format_files/scadenNeutrophil_celltypes.txt")
+
+
+```
+
 ## Deconvolution with Scaden
 
-```{sh}
+NEED TO ADD THAT THE FILE OUT OF SIMULATE NAME NEEDS TO BE ALTERED FOR DIFFERENT TYPES.
+
+```{bash}
 source functions/functions_bash.sh
 set -e
 
-typeDeconv="scaden_plaque"
+typeDeconv="scaden_plaque" # Main folder
+pattern="scaden" # Pattern of input files as recognized by Scaden
+celltypes="7" # Number of cell types in scRNA-seq reference
+nBulk="1000" # Size training set
 
-dirPathFiles="output/$typeDeconv/format_files/"
-dirPathSimul="output/$typeDeconv/simulated_data/"
-dirPathModel="output/$typeDeconv/trained_models/"
-dirPathPred="output/$typeDeconv/predictions/"
+dirPathFiles="output/$typeDeconv/format_files"
+dirPathSimul="output/$typeDeconv/simulated_data"
+dirPathModel="output/$typeDeconv/trained_models"
+dirPathPred="output/$typeDeconv/predictions"
 
 for i in {1..30}
 do
-  scaden simulate -n 10 --pattern "*_counts.txt" --data $dirPathFiles --out $dirPathSimul
+  scaden simulate -n $nBulk --pattern "*_counts.txt" --data $dirPathFiles --out $dirPathSimul
   
-    scaden process "$dirPathSimul/scaden.h5ad" "$dirPathFiles/scaden_bulk_data.txt" --processed_path "$dirPathSimul/processed.h5ad"
+    scaden process "${dirPathSimul}/${pattern}.h5ad" "${dirPathFiles}/${pattern}_bulk_data.txt" --processed_path "${dirPathSimul}/processed.h5ad"
 
-  scaden train "$dirPathSimul/processed.h5ad" --steps 10 --model_dir $dirPathModel
+  scaden train "${dirPathSimul}/processed.h5ad" --steps 5000 --model_dir $dirPathModel
 
-  scaden predict --model_dir $dirPathModel "$dirPathFiles/scaden_bulk_data.txt" --outname "predictions_${typeDeconv}_b1500_c7_$i"
+  scaden predict --model_dir $dirPathModel "${dirPathFiles}/${pattern}_bulk_data.txt" --outname "predictions_${typeDeconv}_b${nBulk}_c${celltypes}_${i}"
 
-  mv "predictions_${typeDeconv}_b1500_c7_$i" $dirPathPred
+  mv "predictions_${typeDeconv}_b${nBulk}_c${celltypes}_${i}" $dirPathPred
   
-  echo "Moved predictions_${typeDeconv}_b1500_c7_$i to $dirPathPred"
+  echo "Moved predictions_${typeDeconv}_b${nBulk}_c${celltypes}_${i} to $dirPathPred"
   
   emptyDir $dirPathSimul $i
   
   emptyDir $dirPathModel $i
 done
-```
-
-```{bash, engine.opts='l'}
-source ~/.bashrc
 ```
 
 ## Plotting predictions
@@ -66,11 +82,11 @@ source ~/.bashrc
 Obtain average proportions:
 
 ```{r}
-typeDeconv = "scaden_plaque"
+typeDeconv = "scaden_neutrophils"
 nSimulations = seq(30)
 
 for(i in nSimulations){
-  path <- paste0("output/", typeDeconv, "/predictions/predictions", typeDeconv, "_b1500_c7_", i)
+  path <- paste0("output/", typeDeconv, "/predictions/predictions_", typeDeconv, "_b1500_c7_", i)
   file <- paste0("pred", i)
   
   assign(file, read.delim(path,
@@ -103,8 +119,12 @@ avgProp <- select(avgProp, Patient, Celltype, `Average proportion`)
 #                              names_from = "Celltype",
 #                              values_from = "Average proportion")
 # 
-# write_excel_csv(exportAvgProp, 
-#                 "output/export_files/AE_scaden_deconvolution_plaque_7clusters_avgprop.csv")
+# write_excel_csv(exportAvgProp,
+#                 "output/export_files/AE_scaden_deconvolution_neutrophils_9clusters_avgprop.csv")
+
+# plaqueAvgProp <- read.csv("output/export_files/AE_scaden_deconvolution_plaque_7clusters_avgprop.csv")
+# 
+# neutrophilsAvgProp <- read.csv("output/export_files/AE_scaden_deconvolution_neutrophils_7clusters_avgprop.csv")
 ```
 
 Graphs of all the predictions and average prediction:
@@ -117,8 +137,8 @@ for(k in nSimulations){
   longFile <- paste0("longPred", k)
   p <- ggplot(get(longFile), aes(x = Celltype, y = Proportion)) +
     geom_boxplot() +
-    labs(title = "Scaden plaque predictions",
-         subtitle = paste0("Run:", k)) +
+    labs(title = paste(typeDeconv, "predictions"),
+         subtitle = paste("Run:", k)) +
     theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8)) +
     scale_y_continuous(name = "Average cell type proportion",
                        limits = c(0, 0.8))
@@ -135,7 +155,7 @@ tiff(paste0("output/figures/", typeDeconv, "_average_all.tiff"),
 
 pAvg <- ggplot(avgProp, aes(x = Celltype, y = `Average proportion`)) +
   geom_boxplot(fill = "#98CAE1") +
-  labs(title = "Scaden plaque predictions",
+  labs(title = paste(typeDeconv, "predictions"),
        subtitle = "All patients") +
   scale_y_continuous(name = "Average cell type proportion",
                            limits = c(0, 0.8)) +
@@ -192,7 +212,7 @@ tiff(paste0("output/figures/", typeDeconv, "_sympt2g.tiff"),
 
 pAvg2g <- ggplot(avgPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Symptoms.2g)) +
   geom_boxplot() +
-  labs(title = "Scaden plaque predictions",
+  labs(title = paste(typeDeconv, "predictions"),
        subtitle = "Mild versus severe symptoms",
        fill = "Group") +
   scale_fill_manual(values = c("#8ec3de", "#f6a582")) +
@@ -216,7 +236,7 @@ tiff(paste0("output/figures/", typeDeconv, "_sympt4g.tiff"),
 
 pAvg4g <- ggplot(avgPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Symptoms.4g)) +
   geom_boxplot() +
-  labs(title = "Scaden plaque predictions",
+  labs(title = paste(typeDeconv, "predictions"),
        subtitle = "Asymptomatic versus ocular versus TIA versus stroke",
        fill = "Group") +
   scale_fill_manual(values = c("#1065ab", "#8ec3de", "#f6a582", "#b31529")) +
