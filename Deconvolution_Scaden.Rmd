@@ -33,13 +33,9 @@ scadenCellTypes <- read.delim("output/scaden_plaque/format_files/scaden_celltype
 neutBulk <- read.delim("output/scaden_neutrophils/format_files/scadenNeutrophil_bulk_data.txt")
 neutCounts <- read.delim("output/scaden_neutrophils/format_files/scadenNeutrophil_counts.txt")
 neutCellTypes <- read.delim("output/scaden_neutrophils/format_files/scadenNeutrophil_celltypes.txt")
-
-
 ```
 
 ## Deconvolution with Scaden
-
-NEED TO ADD THAT THE FILE OUT OF SIMULATE NAME NEEDS TO BE ALTERED FOR DIFFERENT TYPES.
 
 ```{bash}
 source functions/functions_bash.sh
@@ -82,11 +78,12 @@ done
 Obtain average proportions:
 
 ```{r}
-typeDeconv = "scaden_neutrophils"
+typeDeconv = "scaden_plaque"
+nBulk = "1000"
 nSimulations = seq(30)
 
 for(i in nSimulations){
-  path <- paste0("output/", typeDeconv, "/predictions/predictions_", typeDeconv, "_b1500_c7_", i)
+  path <- paste0("output/", typeDeconv, "/predictions/predictions_", typeDeconv, "_b", nBulk, "_c7_", i)
   file <- paste0("pred", i)
   
   assign(file, read.delim(path,
@@ -120,7 +117,7 @@ avgProp <- select(avgProp, Patient, Celltype, `Average proportion`)
 #                              values_from = "Average proportion")
 # 
 # write_excel_csv(exportAvgProp,
-#                 "output/export_files/AE_scaden_deconvolution_neutrophils_9clusters_avgprop.csv")
+#                 "output/export_files/AE_scaden_deconvolution_plaque_7clusters_avgprop_bk1000.csv")
 
 # plaqueAvgProp <- read.csv("output/export_files/AE_scaden_deconvolution_plaque_7clusters_avgprop.csv")
 # 
@@ -131,7 +128,7 @@ Graphs of all the predictions and average prediction:
 
 ```{r}
 #All predictions
-pdf(paste0("output/", typeDeconv, "/predictions/", typeDeconv, "_predictions_graphs_all.pdf"))
+pdf(paste0("output/", typeDeconv, "/predictions/", typeDeconv, "_predictions_graphs_b", nBulk, ".pdf"))
 
 for(k in nSimulations){
   longFile <- paste0("longPred", k)
@@ -148,7 +145,7 @@ for(k in nSimulations){
 dev.off()
 
 #Average prediction
-tiff(paste0("output/figures/", typeDeconv, "_average_all.tiff"),
+tiff(paste0("output/figures/", typeDeconv, "_average_b", nBulk,".tiff"),
      width = 720,
      height = 720,
      units = "px")
@@ -156,7 +153,7 @@ tiff(paste0("output/figures/", typeDeconv, "_average_all.tiff"),
 pAvg <- ggplot(avgProp, aes(x = Celltype, y = `Average proportion`)) +
   geom_boxplot(fill = "#98CAE1") +
   labs(title = paste(typeDeconv, "predictions"),
-       subtitle = "All patients") +
+       subtitle = paste("Size training set:", nBulk)) +
   scale_y_continuous(name = "Average cell type proportion",
                            limits = c(0, 0.8)) +
   ownMinimalTheme()
@@ -205,7 +202,7 @@ avgPropSymp <- avgProp2g %>%
 #### Mild versus severe symptoms
 
 ```{r}
-tiff(paste0("output/figures/", typeDeconv, "_sympt2g.tiff"),
+tiff(paste0("output/figures/", typeDeconv, "_sympt2g_b", nBulk,".tiff"),
      width = 720,
      height = 720,
      units = "px")
@@ -213,7 +210,8 @@ tiff(paste0("output/figures/", typeDeconv, "_sympt2g.tiff"),
 pAvg2g <- ggplot(avgPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Symptoms.2g)) +
   geom_boxplot() +
   labs(title = paste(typeDeconv, "predictions"),
-       subtitle = "Mild versus severe symptoms",
+       subtitle = paste("Mild versus severe symptoms/n
+                        Size training set:", nBulk),
        fill = "Group") +
   scale_fill_manual(values = c("#8ec3de", "#f6a582")) +
   scale_color_manual(values = c("black", "black")) +
@@ -229,7 +227,7 @@ dev.off()
 #### Asymptomatic versus ocular versus TIA versus stroke symptoms
 
 ```{r}
-tiff(paste0("output/figures/", typeDeconv, "_sympt4g.tiff"),
+tiff(paste0("output/figures/", typeDeconv, "_sympt4g_b", nBulk,".tiff"),
      width = 720,
      height = 720,
      units = "px")
@@ -237,7 +235,8 @@ tiff(paste0("output/figures/", typeDeconv, "_sympt4g.tiff"),
 pAvg4g <- ggplot(avgPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Symptoms.4g)) +
   geom_boxplot() +
   labs(title = paste(typeDeconv, "predictions"),
-       subtitle = "Asymptomatic versus ocular versus TIA versus stroke",
+       subtitle = paste("Asymptomatic versus ocular versus TIA versus stroke/n
+                        Size training set:", nBulk),
        fill = "Group") +
   scale_fill_manual(values = c("#1065ab", "#8ec3de", "#f6a582", "#b31529")) +
   scale_color_manual(values = c("black", "black", "black","black")) +
