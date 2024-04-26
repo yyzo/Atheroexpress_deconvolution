@@ -311,22 +311,22 @@ gemmaFinalProp <- gemmaProp %>%
     values_to = "Average proportion"
   )
 
-tiff("output/figures/Gemma_plaque_all.tiff",
-     width = 720,
-     height = 720,
-     units = "px")
-
-pGemma <- ggplot(gemmaFinalProp, aes(x = Celltype, y = `Average proportion`)) +
-  geom_boxplot(fill = "#98CAE1") +
-  labs(title = "Gemma plaque predictions",
-       subtitle = "All patients") +
-  scale_y_continuous(name = "Average cell type proportion",
-                     limits = c(0, 0.8)) +
-  ownMinimalTheme()
-
-print(pGemma)
-
-dev.off()
+# tiff("output/figures/Gemma_plaque_all.tiff",
+#      width = 720,
+#      height = 720,
+#      units = "px")
+# 
+# pGemma <- ggplot(gemmaFinalProp, aes(x = Celltype, y = `Average proportion`)) +
+#   geom_boxplot(fill = "#98CAE1") +
+#   labs(title = "Gemma plaque predictions",
+#        subtitle = "All patients") +
+#   scale_y_continuous(name = "Average cell type proportion",
+#                      limits = c(0, 0.8)) +
+#   ownMinimalTheme()
+# 
+# print(pGemma)
+# 
+# dev.off()
 ```
 
 ### Different patient characteristics
@@ -447,6 +447,24 @@ print(resWilcoxG)
 
 ```{r}
 filterGemmaPropSymp <- filter(gemmaPropSymp, Patient %in% avgPropSymp$Patient)
+
+#All patients
+compare <- avgPropSymp[1:2]
+compare["ownProp"] <- avgPropSymp$`Average proportion`
+compare["gemmaProp"] <- filterGemmaPropSymp$`Average proportion`
+
+tiff("output/figures/cor_plaque_all.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
+  labs(title = "Correlation average cellular proportions of all patients")
+
+dev.off()
 
 #Mild
 own <- filter(avgPropSymp, Symptoms.2g == "mild")
