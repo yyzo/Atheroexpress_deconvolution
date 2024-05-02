@@ -1,0 +1,61 @@
+---
+title: "Data_preprocessing_cfRNA"
+author: "Yayuan Zhu"
+date: "2024-05-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+...
+
+## Setup
+
+```{r message=FALSE, warning=FALSE}
+library(Biobase)
+library(fs)
+library(magrittr)
+library(rstudioapi)
+library(Seurat)
+library(stringr)
+library(tidyverse)
+
+source("functions/functions_R.R")
+```
+
+## Description data collection
+
+a
+
+| Data                            | Source                                                                                                                                                | Date obtained (dd/mm/yyyy) |
+|---------------|------------------------------------------|---------------|
+| Bulk RNA-sequencing data        | In-house                                                                                                                                              | 16/01/2024                 |
+| HGNC complete set               | HGNC ([URL](HGNC%20https://ftp.ebi.ac.uk/pub/databases/genenames/hgnc/archive/monthly/tsv/hgnc_complete_set_2024-01-01.txt))                          | 16/01/2024                 |
+| Non-coding RNA list             | HGNC, filtered on non-coding RNA ([URL](https://www.genenames.org/tools/search/#!/?query=&rows=20&start=0&filter=locus_group:%22Non-coding%20RNA%22)) | 16/01/2024                 |
+| AtheroExpress patient data      | In-house                                                                                                                                              | 15/03/2024                 |
+| AtheroExpress patient data      | In-house                                                                                                                                              | 15/03/2024                 |
+| Single-cell RNA-sequencing data | Tabula Sapiens - All Cells ([URL](https://datasets.cellxgene.cziscience.com/b84def55-a776-4aa4-a9a6-7aab8b973086.rds))                                | 01/05/2024                 |
+
+```{r}
+tsData <- readRDS("input/Tabula_Sapiens_all_cells.rds")
+```
+
+```{r}
+bloodCellTypes <- as.data.frame(sort(table(tsBlood@meta.data$cell_type)))
+vascCellTypes <- as.data.frame(sort(table(tsVasc@meta.data$cell_type)))
+
+View(tsBlood@meta.data)
+View(tsVasc@assays[["RNA"]]$counts)
+
+Idents(tsBlood) <- tsBlood@meta.data$cell_type
+
+DimPlot(tsBlood,
+        reduction = "umap",
+        label = TRUE,
+        label.size = 2,
+        label.box = TRUE)
+```
