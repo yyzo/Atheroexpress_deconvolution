@@ -31,3 +31,31 @@ ownMinimalTheme <- function(){
         legend.title = element_text(size = 16),
         legend.text = element_text(size = 13))
 }
+
+highlightCellsUMAP <- function(umapData, cellTypesColumn, regexPattern, title){
+  matchCells <- grep(regexPattern,
+                     levels(umapData@meta.data$cellTypesColumn),
+                     value = TRUE)
+  
+  cellsToHighlight <- list()
+  
+  for (cellType in matchCells){
+    cellsToHighlight[[cellType]] <- Seurat::WhichCells(umapData, idents = cellType)
+  }
+  
+  if(length(cellsToHighlight) > 0){
+    highlightColors <- scales::hue_pal()(length(cellsToHighlight))
+    
+    p <- Seurat::DimPlot(umapData,
+                         reduction = "umap",
+                         cells.highlight = cellsToHighlight, 
+                         cols.highlight = highlightColors, 
+                         cols = "grey",
+                         raster = F) +
+      labs(title = title)
+    
+    return(p)
+  } else{
+    print("No match to pattern")
+  }
+}
