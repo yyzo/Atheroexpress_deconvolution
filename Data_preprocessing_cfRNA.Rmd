@@ -29,10 +29,8 @@ source("functions/functions_R.R")
 
 ## Description data collection
 
-a
-
 | Data                            | Source                                                                                                                                                | Date obtained (dd/mm/yyyy) |
-|---------------|------------------------------------------|---------------|
+|---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------|
 | Bulk RNA-sequencing data        | In-house                                                                                                                                              | 16/01/2024                 |
 | HGNC complete set               | HGNC ([URL](HGNC%20https://ftp.ebi.ac.uk/pub/databases/genenames/hgnc/archive/monthly/tsv/hgnc_complete_set_2024-01-01.txt))                          | 16/01/2024                 |
 | Non-coding RNA list             | HGNC, filtered on non-coding RNA ([URL](https://www.genenames.org/tools/search/#!/?query=&rows=20&start=0&filter=locus_group:%22Non-coding%20RNA%22)) | 16/01/2024                 |
@@ -40,22 +38,176 @@ a
 | AtheroExpress patient data      | In-house                                                                                                                                              | 15/03/2024                 |
 | Single-cell RNA-sequencing data | Tabula Sapiens - All Cells ([URL](https://datasets.cellxgene.cziscience.com/b84def55-a776-4aa4-a9a6-7aab8b973086.rds))                                | 01/05/2024                 |
 
+## Import data
+
 ```{r}
 tsData <- readRDS("input/Tabula_Sapiens_all_cells.rds")
+
+Idents(tsData) <- tsData@meta.data$cell_ontology_class
+
+gc()
+```
+
+## Filter on frequency before clustering
+
+```{r}
+freq <- as_tibble(table(Original = tsData@meta.data$cell_ontology_class))
+
+# Exclude cells with too broad annotations when more detailed annotations exist.
+toExclude <- c("sperm", "ciliary body", "adipocyte", "duodenum glandular cell", "salivary gland cell", "ocular surface cell", "melanocyte", "connective tissue cell", "lacrimal gland functional unit cell", "hillock-club cell of prostate epithelium", "muscle cell", "granulocyte", "immune cell", "myeloid cell", "stromal cell", "innate lymphoid cell")
+
+# Exclude cells with a frequency < 100 cells.
+aboveThreshold <- as.character(freq$Original[freq$n >= 100])
+
+toInclude <- freq$Original[!(freq$Original %in% toExclude) & freq$Original %in% aboveThreshold]
+
+# Extract counts matrix and cell types matrix as the Seurat Object takes too much space
+tsCounts <- tsData@assays[["RNA"]]$counts
+
+tsFilter <- subset(tsData, idents = toInclude)
+
+rm(tsData)
+gc()
+
+
+
+Idents(tsData) <- tsData@meta.data$cell_ontology_class
+
+before <- as.data.frame(Idents(tsData))
+
+before$`Idents(tsData)` <- as.character(before$`Idents(tsData)`)
+```
+
+## Cluster cell types - arbitrary
+
+```{r}
+regexPattern <- "(?i)dendritic"
+title <- "Dendritic cells"
+plot <- highlightCellsUMAP(tsData, "cell_ontology_class", regexPattern, title)
+# cells <- as.vector(cellTypes$`Original cell type`[cellTypes$compartment == "stromal"])
+# plot <- highlightCompartmentUMAP(tsData, cells, title)
+
+tiff(paste0("output/figures/Tabula_Sapiens/", title, ".tiff"),
+     width = 1280,
+     height = 720,
+     unit = "px")
+
+print(plot)
+
+dev.off()
 ```
 
 ```{r}
-bloodCellTypes <- as.data.frame(sort(table(tsBlood@meta.data$cell_type)))
-vascCellTypes <- as.data.frame(sort(table(tsVasc@meta.data$cell_type)))
+# View(tsData@meta.data)
 
-View(tsBlood@meta.data)
-View(tsVasc@assays[["RNA"]]$counts)
+frequency <- as.data.frame(table(tsData@meta.data$cell_ontology_class)) %>%
+  rename(`Original cell type` = Var1)
 
-Idents(tsBlood) <- tsBlood@meta.data$cell_type
+cellTypes <- tsData@meta.data %>%
+  distinct(cell_ontology_class, .keep_all = TRUE)%>%
+  select(cell_ontology_class, compartment) %>%
+  rename(`Original cell type` = cell_ontology_class) %>%
+  left_join(frequency, by = "Original cell type")
 
-DimPlot(tsBlood,
+cluster <- list(
+  "Smooth muscle cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)smooth|myometrial")),
+  "T/NK cell" = unique(str_subset(cellTypes$`Original cell type`, "((?i)(\\W|nk)t\\scell)|((?i)nk cell)|(?i)^t cell|(?i)thymocyte|natural")),
+  "B cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)((^|\\b)b\\scell)|(plasma[^c])")),
+  "Neutrophil" = unique(str_subset(cellTypes$`Original cell type`, "(?i)neutrophil")),
+  "Monocyte" = unique(str_subset(cellTypes$`Original cell type`, "(?i)macrophage|monocyte|dendritic|langer")),
+  "Fibroblast/Mesenchymal stem cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)fibroblast|mesenchymal")),
+  "Basophil" = unique(str_subset(cellTypes$`Original cell type`, "(?i)basophil")),
+  "Mast cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)mast cell")),
+  "Erythrocyte" = unique(str_subset(cellTypes$`Original cell type`, "(?i)eryth")),
+#   "Muscle cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)[^h] muscle|^muscle")),
+#   "Glial cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)glial|schwann")),
+#   "Retinal neurons" = unique(str_subset(cellTypes$`Original cell type`, "(?i)retina h|retinal g|neuron")),
+#   "Mesothial cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)meso")),
+#  "Adipocyte" = unique(str_subset(cellTypes$`Original cell type`, "(?i)adipocyte")),
+#   "Connective tissue cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)tendon|connective")),
+#   "Platelet" = unique(str_subset(cellTypes$`Original cell type`, "(?i)platelet")),
+#   "Myeloid progenitor" = unique(str_subset(cellTypes$`Original cell type`, "(?i)myeloid progenitor"))
+  "Epithelial cell" = c(as.vector(cellTypes$`Original cell type`[cellTypes$compartment == "epithelial"]), "melanocyte"),
+  "Endothelial cell" = as.vector(cellTypes$`Original cell type`[cellTypes$compartment == "endothelial"])
+)
+
+clType <- as.character(cellTypes$`Original cell type`)
+
+for (level in levels(cellTypes$`Original cell type`)) {
+  for (name in names(cluster)) {
+    if (level %in% unlist(cluster[[name]])) {
+      clType[clType %in% unlist(cluster[[name]])] <- name
+    }
+  }
+}
+
+cellTypes$`Group cell type` <- as.character(factor(clType, levels = names(cluster)))
+
+cellTypes$`Original cell type` <- as.character(cellTypes$`Original cell type`)
+
+cellTypes$`Group cell type` <- ifelse(is.na(cellTypes$`Group cell type`), cellTypes$`Original cell type`, cellTypes$`Group cell type`)
+
+after <- before
+
+#FIND A FASTER WAY TO ACHIEVE THIS
+for(i in seq_along(before$`Idents(tsData)`)){
+  for(n in seq_along(cellTypes$`Original cell type`)){
+    if(before$`Idents(tsData)`[i] == cellTypes$`Original cell type`[n]){
+      after$`Idents(tsData)`[i] <- cellTypes$`Group cell type`[n]
+    }
+  }
+}
+
+Idents(tsData) <- after$`Idents(tsData)`
+
+tiff(paste0("output/figures/Tabula_Sapiens/group1.tiff"),
+     width = 1280,
+     height = 720,
+     unit = "px")
+
+DimPlot(tsData,
         reduction = "umap",
-        label = TRUE,
-        label.size = 2,
-        label.box = TRUE)
+        raster = FALSE) +
+  guides(color = guide_legend(ncol = 2))
+
+dev.off()
+
+freqGroup1 <- as.data.frame(table(after$`Idents(tsData)`))
+
 ```
+
+To do:
+
+-   Add brain data + fat data
+
+-   Separate epithelial cells for organs that are important for cardiovascular health (e.g. kidney, endocrine, lung, liver)
+
+    -   Look for articles to back up that the cell types of these organs have something to do with cardiovascular health.
+
+```{r}
+compartmentUMAP <- tsData
+
+Idents(compartmentUMAP) <- tsData@meta.data$compartment
+
+compartmentPlot <- DimPlot(compartmentUMAP,
+                           reduction = "umap",
+                           raster = FALSE) +
+  labs(title = "Compartments")
+
+tiff(paste0("output/figures/Tabula_Sapiens/compartments.tiff"),
+     width = 1280,
+     height = 720,
+     unit = "px")
+
+print(compartmentPlot)
+
+dev.off()
+```
+
+## Cluster - ChatGPT
+
+```{r}
+
+```
+
+## Cluster - hierarchical clustering

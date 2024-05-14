@@ -8,6 +8,3 @@ def empty_folder(folder_path):
                 shutil.rmtree(file_path)
         except Exception as e:
             print(f"Failed to delete {file_path}. Reason: {e}")
-
-empty_folder("generatedData/")
-empty_folder("generatedModels/")

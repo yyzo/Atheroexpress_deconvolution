@@ -15,63 +15,64 @@ knitr::opts_chunk$set(echo = TRUE)
 library(magrittr)
 library(tidyverse)
 library(BayesPrism)
-```
-
-## Testing with tutorial data
-
-...
-
-```{r}
-load("tutorial.gbm.rdata")
-```
-
-```{r}
-sc.dat.filtered <- cleanup.genes (input=sc.dat,
-                                  input.type="count.matrix",
-                                    species="hs", 
-                                    gene.group=c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY") ,
-                                    exp.cells=5)
-
-sc.dat.filtered.pc <-  select.gene.type (sc.dat.filtered,
-                                        gene.type = "protein_coding")
-
-rm(sc.dat.filtered)
-gc()
-
-myPrism <- new.prism(
-  reference=sc.dat.filtered.pc, 
-  mixture=bk.dat,
-  input.type="count.matrix", 
-  cell.type.labels = cell.type.labels, 
-  cell.state.labels = cell.state.labels,
-  key="tumor",
-  outlier.cut=0.01,
-    outlier.fraction=0.1,
-)
-
-rm(sc.dat.filtered.pc)
-gc()
-
-bp.res <- run.prism(prism = myPrism, n.cores=50)
-bp.res
-
 
 ```
 
-## Importing files
+## Quality control scRNA dataset
 
 ```{r}
-
+scData <- subset(read_rds("input/full.43p_10X.integrated.cleaned.archetypes.seurat.RDS"), Tissue != "PBMC")
 ```
 
-...
-
 ```{r}
-cellTypeLabels <- as.vector(cellTypeLabels)
-```
+scData@meta.data$log10GenesPerUMI <- log10(scData$nFeature_RNA) / log10(scData$nCount_RNA)
 
-## Session info
+scData$mitoRatio <- PercentageFeatureSet(object = scData, pattern = "^MT-")
+scData$mitoRatio <- scData@meta.data$mitoRatio / 100
 
-```{r}
-devtools::session_info()
+metadata <- scData@meta.data
+
+metadata <- metadata %>%
+        dplyr::rename(seq_folder = orig.ident,
+                      nUMI = nCount_RNA,
+                      nGene = nFeature_RNA)
+
+metadata %>% 
+  	ggplot(aes(x=nUMI)) + 
+  	geom_density() + 
+  	scale_x_log10() + 
+  	theme_classic() +
+  	ylab("Cell density") +
+  	geom_vline(xintercept = 500)
+
+metadata %>% 
+  	ggplot(aes(x=nGene)) + 
+  	geom_density(alpha = 0.2) + 
+  	theme_classic() +
+  	scale_x_log10() + 
+  	geom_vline(xintercept = 300)
+
+metadata %>% 
+  	ggplot(aes(x=nUMI, y=nGene, color=mitoRatio)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "black") +
+  	stat_smooth(method=lm) +
+  	scale_x_log10() + 
+  	scale_y_log10() + 
+  	theme_classic() +
+  	geom_vline(xintercept = 500) +
+  	geom_hline(yintercept = 250)
+
+metadata %>% 
+  	ggplot(aes(x=mitoRatio)) + 
+  	geom_density(alpha = 0.2) + 
+  	scale_x_log10() + 
+  	theme_classic() +
+  	geom_vline(xintercept = 0.2)
+
+metadata %>%
+  	ggplot(aes(x=log10GenesPerUMI)) +
+  	geom_density(alpha = 0.2) +
+  	theme_classic() +
+  	geom_vline(xintercept = 0.8)
 ```

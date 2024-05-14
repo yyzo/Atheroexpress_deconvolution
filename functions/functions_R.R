@@ -32,30 +32,53 @@ ownMinimalTheme <- function(){
         legend.text = element_text(size = 13))
 }
 
-highlightCellsUMAP <- function(umapData, cellTypesColumn, regexPattern, title){
+# CHANGE IT SO THAT IT ONLY DEPENDS ON IDENTS OF SEURAT OBJECT
+highlightCellsUMAP <- function(seuratObject, cellTypesColumn, regexPattern, title){
   matchCells <- grep(regexPattern,
-                     levels(umapData@meta.data$cellTypesColumn),
+                     levels(seuratObject@meta.data[[cellTypesColumn]]),
                      value = TRUE)
   
   cellsToHighlight <- list()
   
   for (cellType in matchCells){
-    cellsToHighlight[[cellType]] <- Seurat::WhichCells(umapData, idents = cellType)
+    cellsToHighlight[[cellType]] <- Seurat::WhichCells(seuratObject, idents = cellType)
   }
   
   if(length(cellsToHighlight) > 0){
     highlightColors <- scales::hue_pal()(length(cellsToHighlight))
     
-    p <- Seurat::DimPlot(umapData,
+    p <- Seurat::DimPlot(seuratObject,
                          reduction = "umap",
                          cells.highlight = cellsToHighlight, 
                          cols.highlight = highlightColors, 
                          cols = "grey",
-                         raster = F) +
-      labs(title = title)
+                         raster = FALSE) +
+      labs(title = title) +
+      guides(color = guide_legend(ncol = 1))
     
     return(p)
   } else{
     print("No match to pattern")
   }
+}
+
+highlightCompartmentUMAP <- function(seuratObject, cellTypesVector, title){
+  cellsToHighlight <- list()
+  
+  for (cellType in cellTypesVector){
+    cellsToHighlight[[cellType]] <- Seurat::WhichCells(seuratObject, idents = cellType)
+  }
+  
+  highlightColors <- scales::hue_pal()(length(cellsToHighlight))
+  
+  p <- Seurat::DimPlot(seuratObject,
+                       reduction = "umap",
+                       cells.highlight = cellsToHighlight, 
+                       cols.highlight = highlightColors, 
+                       cols = "grey",
+                       raster = FALSE) +
+    labs(title = title) +
+    guides(color = guide_legend(ncol = 2))
+  
+  return(p)
 }
