@@ -23,20 +23,22 @@ library(rstudioapi)
 library(Seurat)
 library(stringr)
 library(tidyverse)
+library(scCustomize) # ADD CITATION OF THIS PACKAGE (samuel-marsh.github.io/scCustomize/articles/FAQ.html)
 
 source("functions/functions_R.R")
 ```
 
 ## Description data collection
 
-| Data                            | Source                                                                                                                                                | Date obtained (dd/mm/yyyy) |
-|---------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------|
-| Bulk RNA-sequencing data        | In-house                                                                                                                                              | 16/01/2024                 |
-| HGNC complete set               | HGNC ([URL](HGNC%20https://ftp.ebi.ac.uk/pub/databases/genenames/hgnc/archive/monthly/tsv/hgnc_complete_set_2024-01-01.txt))                          | 16/01/2024                 |
-| Non-coding RNA list             | HGNC, filtered on non-coding RNA ([URL](https://www.genenames.org/tools/search/#!/?query=&rows=20&start=0&filter=locus_group:%22Non-coding%20RNA%22)) | 16/01/2024                 |
-| AtheroExpress patient data      | In-house                                                                                                                                              | 15/03/2024                 |
-| AtheroExpress patient data      | In-house                                                                                                                                              | 15/03/2024                 |
-| Single-cell RNA-sequencing data | Tabula Sapiens - All Cells ([URL](https://datasets.cellxgene.cziscience.com/b84def55-a776-4aa4-a9a6-7aab8b973086.rds))                                | 01/05/2024                 |
+| Data                              | Source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Date obtained (dd/mm/yyyy) |
+|---------|-------------------------------------------------------|---------|
+| Bulk RNA-sequencing data          | In-house                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 16/01/2024                 |
+| HGNC complete set                 | HGNC ([URL](HGNC%20https://ftp.ebi.ac.uk/pub/databases/genenames/hgnc/archive/monthly/tsv/hgnc_complete_set_2024-01-01.txt))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | 16/01/2024                 |
+| Non-coding RNA list               | HGNC, filtered on non-coding RNA ([URL](https://www.genenames.org/tools/search/#!/?query=&rows=20&start=0&filter=locus_group:%22Non-coding%20RNA%22))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | 16/01/2024                 |
+| AtheroExpress patient data        | In-house                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 15/03/2024                 |
+| AtheroExpress patient data        | In-house                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 15/03/2024                 |
+| Single-cell RNA-sequencing data   | Tabula Sapiens - All Cells ([URL](https://datasets.cellxgene.cziscience.com/b84def55-a776-4aa4-a9a6-7aab8b973086.rds))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | 01/05/2024                 |
+| Single-nuclei RNA-sequencing data | Emont MP, Jacobs C, Essene AL, Pant D, Tenen D, Colleluori G, Di Vincenzo A, Jørgensen AM, Dashti H, Stefek A, McGonagle E, Strobel S, Laber S, Agrawal S, Westcott GP, Kar A, Veregge ML, Gulko A, Srinivasan H, Kramer Z, De Filippis E, Merkel E, Ducie J, Boyd CG, Gourash W, Courcoulas A, Lin SJ, Lee BT, Morris D, Tobias A, Khera AV, Claussnitzer M, Pers TH, Giordano A, Ashenberg O, Regev A, Tsai LT, Rosen ED. A single-cell atlas of human and mouse white adipose tissue. Nature. 2022 Mar;603(7903):926-933. doi: 10.1038/s41586-022-04518-2. Epub 2022 Mar 16. Erratum in: Nature. 2023 Aug;620(7973):E14. PMID: 35296864; PMCID: PMC9504827. ([URL](https://singlecell.broadinstitute.org/single_cell/study/SCP1376/a-single-cell-atlas-of-human-and-mouse-white-adipose-tissue#study-summary)) | 21/05/2024                 |
 
 ## Import data
 
@@ -46,30 +48,170 @@ tsData <- readRDS("input/Tabula_Sapiens_all_cells.rds")
 Idents(tsData) <- tsData@meta.data$cell_ontology_class
 
 gc()
+
+# load (bulkFilter, file = "output/export_files/AE_bulk_data_654patients_filterRNA_notfinal.RData")
+```
+
+As the Tabula Sapiens single-cell RNA-seqencing (scRNA-seq) data only contains 44 adipocytes, additional single-nuclei RNA-sequencing (snRNA-seq) data of adipocytes from white adipose tissue will be integrated [Emont *et al.* (2023)]. Additionally, the same will be done for cell types present in the brain and the testis as these tissues are absent from the Tabula Sapiens dataset.
+
+```{r}
+# data_dir <- "input/Hermann_scRNA"
+# Adipocyte
+adipocyteData <- subset(readRDS("input/human_all_lite.rds"), technology == "Chromium-v3") # For adipocytes, 18939 female and 6932 male.
+
+# ---------------------------------------------------------------
+
+# Brain
+# ...
+
+# ---------------------------------------------------------------
+
+# Testis
+# list.files(data_dir)
+# data <- Read10X(data.dir = data_dir)
+# testObject = CreateSeuratObject(counts = data,
+#                                 project = "AdultHumanSpermatogonia",
+#                                 min.cells = 3,
+#                                 min.features = 200)
+```
+
+## Quality control external data
+
+### Adipocyte
+
+```{r}
+# tiff("output/figures/Emont2023_all_snRNA.tiff",
+#      width = 720,
+#      height = 720,
+#      unit = "px")
+
+DimPlot_scCustom(adipocyteData,
+                 reduction = "umap",
+                 label.box = TRUE,
+                 repel = TRUE)
+
+# dev.off()
+
+# tiff("output/figures/Emont2023_QC_all.tiff",
+#      width = 1920,
+#      height = 1080,
+#      unit = "px")
+
+QC_Plots_Combined_Vln(adipocyteData, 
+                      feature_cutoffs = c(200, 3500), 
+                      UMI_cutoffs = c(500, 15000), 
+                      mito_cutoffs = 5,
+                      mito_name = "mt.percent",
+                      plot_boxplot = TRUE)
+
+# dev.off()
+
+onlyAdipocyte <- readRDS("input/human_adipocytes_lite.rds")
+
+# tiff("output/figures/Emont2023_QC_adipocyte_sub.tiff",
+#      width = 1920,
+#      height = 1080,
+#      unit = "px")
+
+QC_Plots_Combined_Vln(onlyAdipocyte, 
+                      feature_cutoffs = c(200, 3500), 
+                      UMI_cutoffs = c(500, 15000), 
+                      mito_cutoffs = 5,
+                      mito_name = "mt.percent",
+                      plot_boxplot = TRUE)
+
+# dev.off()
+
+tiff("output/figures/Emont2023_QC_adipocyte_sub_UMIvsGene.tiff",
+     width = 720,
+     height = 720,
+     unit = "px")
+
+QC_Plot_UMIvsGene(onlyAdipocyte, 
+                  low_cutoff_gene = 200,
+                  high_cutoff_gene = 3500, 
+                  low_cutoff_UMI = 500,
+                  high_cutoff_UMI = 15000)
+
+dev.off()
+
+tiff("output/figures/Emont2023_QC_adipocyte_sub_GenevsMito.tiff",
+     width = 720,
+     height = 720,
+     unit = "px")
+
+QC_Plot_GenevsFeature(onlyAdipocyte, 
+                      feature1 = "mt.percent",
+                      low_cutoff_gene = 200,
+                      high_cutoff_gene = 3500, 
+                      high_cutoff_feature = 5)
+
+dev.off()
+
+# Keep nuclei with less than 5% mitochondrial genes expressed; limits the waste due to possible contamination.
+adipocyteFilter <- subset(onlyAdipocyte,
+                          nFeature_RNA > 200 & nFeature_RNA < 3500 &
+                          nCount_RNA > 500 & nCount_RNA < 15000 &
+                          mt.percent < 5)
+```
+
+## Remove unwanted cell types
+
+First, cell types were excluded from the Tabula Sapiens single-cell RNA-sequencing (scRNA-seq) dataset based on the following criteria:
+
+-   The annotation is too broad and annotations at a finer resolution are present, e.g. "immune cell" or "connective tissue cell".
+
+-   The annotation describes a structure and is not a distinct cell type, e.g. "ciliary body" or "lacrimal gland functional unit cell".
+
+-   The cell type deemed not relevant enough to the cardiovascular health, e.g. "melanocyte".
+
+-   The cell type does not typify the respective organ.
+
+-   The cluster/cell type has a frequency below 100 cells.
+
+    -   In other words, the removal of cells based on the frequency will occur before and after the cells have been clustered. The inclusion of rare cell types may have an effect on the following cellular deconvolution.
+
+```{r}
+freq <- as_tibble(table(original = tsData@meta.data$cell_ontology_class))
 ```
 
 ## Filter on frequency before clustering
 
 ```{r}
-freq <- as_tibble(table(Original = tsData@meta.data$cell_ontology_class))
+freq <- as_tibble(table(original = tsData@meta.data$cell_ontology_class))
 
 # Exclude cells with too broad annotations when more detailed annotations exist.
 toExclude <- c("sperm", "ciliary body", "adipocyte", "duodenum glandular cell", "salivary gland cell", "ocular surface cell", "melanocyte", "connective tissue cell", "lacrimal gland functional unit cell", "hillock-club cell of prostate epithelium", "muscle cell", "granulocyte", "immune cell", "myeloid cell", "stromal cell", "innate lymphoid cell")
 
 # Exclude cells with a frequency < 100 cells.
-aboveThreshold <- as.character(freq$Original[freq$n >= 100])
+# aboveThreshold <- as.character(freq$Original[freq$n >= 100])
 
-toInclude <- freq$Original[!(freq$Original %in% toExclude) & freq$Original %in% aboveThreshold]
+# toInclude <- freq$original[!(freq$original %in% toExclude) & freq$original %in% aboveThreshold]
+
+toInclude <- freq$original[!(freq$original %in% toExclude)]
+
+# ----------- Need to figure out how to work around too little memory
 
 # Extract counts matrix and cell types matrix as the Seurat Object takes too much space
 tsCounts <- tsData@assays[["RNA"]]$counts
+
+tsCells <- as_tibble(tsData@meta.data$cell_ontology_class) %>%
+  rename(Celltype = value)
+
+
+
+rm(toExclude)
+gc()
+
+rm(freq)
 
 tsFilter <- subset(tsData, idents = toInclude)
 
 rm(tsData)
 gc()
 
-
+tsData <- readRDS("input/Tabula_Sapiens_all_cells.rds") %>%
+  subset(idents = toInclude)
 
 Idents(tsData) <- tsData@meta.data$cell_ontology_class
 
@@ -81,10 +223,10 @@ before$`Idents(tsData)` <- as.character(before$`Idents(tsData)`)
 ## Cluster cell types - arbitrary
 
 ```{r}
-regexPattern <- "(?i)dendritic"
-title <- "Dendritic cells"
-plot <- highlightCellsUMAP(tsData, "cell_ontology_class", regexPattern, title)
-# cells <- as.vector(cellTypes$`Original cell type`[cellTypes$compartment == "stromal"])
+pattern <- "(?i)kidney epithelial cell"
+title <- "Kidney epithelial cells"
+plot <- highlightCellsUMAP(tsData, "cell_ontology_class", pattern, title)
+# cells <- as.vector(cellTypes$`Original cell type`[cellTypes$compartment == "endothelial"])
 # plot <- highlightCompartmentUMAP(tsData, cells, title)
 
 tiff(paste0("output/figures/Tabula_Sapiens/", title, ".tiff"),
@@ -98,57 +240,61 @@ dev.off()
 ```
 
 ```{r}
-# View(tsData@meta.data)
-
-frequency <- as.data.frame(table(tsData@meta.data$cell_ontology_class)) %>%
-  rename(`Original cell type` = Var1)
-
 cellTypes <- tsData@meta.data %>%
   distinct(cell_ontology_class, .keep_all = TRUE)%>%
   select(cell_ontology_class, compartment) %>%
-  rename(`Original cell type` = cell_ontology_class) %>%
-  left_join(frequency, by = "Original cell type")
+  rename(original = cell_ontology_class) %>%
+  left_join(freq, by = "original")
 
 cluster <- list(
-  "Smooth muscle cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)smooth|myometrial")),
-  "T/NK cell" = unique(str_subset(cellTypes$`Original cell type`, "((?i)(\\W|nk)t\\scell)|((?i)nk cell)|(?i)^t cell|(?i)thymocyte|natural")),
-  "B cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)((^|\\b)b\\scell)|(plasma[^c])")),
-  "Neutrophil" = unique(str_subset(cellTypes$`Original cell type`, "(?i)neutrophil")),
-  "Monocyte" = unique(str_subset(cellTypes$`Original cell type`, "(?i)macrophage|monocyte|dendritic|langer")),
-  "Fibroblast/Mesenchymal stem cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)fibroblast|mesenchymal")),
-  "Basophil" = unique(str_subset(cellTypes$`Original cell type`, "(?i)basophil")),
-  "Mast cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)mast cell")),
-  "Erythrocyte" = unique(str_subset(cellTypes$`Original cell type`, "(?i)eryth")),
-#   "Muscle cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)[^h] muscle|^muscle")),
-#   "Glial cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)glial|schwann")),
-#   "Retinal neurons" = unique(str_subset(cellTypes$`Original cell type`, "(?i)retina h|retinal g|neuron")),
-#   "Mesothial cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)meso")),
-#  "Adipocyte" = unique(str_subset(cellTypes$`Original cell type`, "(?i)adipocyte")),
-#   "Connective tissue cell" = unique(str_subset(cellTypes$`Original cell type`, "(?i)tendon|connective")),
-#   "Platelet" = unique(str_subset(cellTypes$`Original cell type`, "(?i)platelet")),
-#   "Myeloid progenitor" = unique(str_subset(cellTypes$`Original cell type`, "(?i)myeloid progenitor"))
-  "Epithelial cell" = c(as.vector(cellTypes$`Original cell type`[cellTypes$compartment == "epithelial"]), "melanocyte"),
-  "Endothelial cell" = as.vector(cellTypes$`Original cell type`[cellTypes$compartment == "endothelial"])
+  "Monocyte" = unique(str_subset(cellTypes$original, "(?i)dendritic|monocyte|macrophage|langerhans")),
+  "Mesenchymal cell/fibroblast" = unique(str_subset(cellTypes$original, "(?i)limbal stromal|tendon|fibroblast|stellate|keratocyte|adventitial|mesenchymal")),
+  "Skeletel muscle cell" = unique(str_subset(cellTypes$original, "(?i)[^hc] muscle")),
+  "B cell" = unique(str_subset(cellTypes$original, "(?i)(^|\\b)b\\scell|plasma[^c]")),
+  "Platelet" = unique(str_subset(cellTypes$original, "(?i)platelet")),
+  "Basophil/mast cell" = unique(str_subset(cellTypes$original, "(?i)basophil|mast")),
+  "Neural cells" = unique(str_subset(cellTypes$original, "(?i)ganglion|horizontal|eye|neuron|glial|schwann|muller")),
+  "Neutrophil" = unique(str_subset(cellTypes$original, "(?i)neutrophil")),
+  "Erythrocyte" = unique(str_subset(cellTypes$original, "(?i)erythrocyte")),
+  "Epithelial cell" = c(as.vector(cellTypes$original[cellTypes$compartment == "epithelial"]), "mesothelial cell"),
+  "Cardiac muscle cell" = unique(str_subset(cellTypes$original, "(?i)cardiac muscle")),
+  "Hematopoietic progenitors" = unique(str_subset(cellTypes$original, "(?i)hematopoietic|progenitor|erythroid")),
+  "Pericyte/smooth muscle cell" = unique(str_subset(cellTypes$original, "(?i)smooth|myometrial|pericyte")),
+  "Endothelial cell" = as.vector(cellTypes$original[cellTypes$compartment == "endothelial"]),
+  "T/NK cell" = unique(str_subset(cellTypes$original, "(?i)(nk)|(natural)|(thymocyte)|((\\A|\\W)t cell)|(follicular)"))
 )
 
-clType <- as.character(cellTypes$`Original cell type`)
+unique(tsData@meta.data$tissue_in_publication[tsData@meta.data$cell_ontology_class == "hepatocyte"])
 
-for (level in levels(cellTypes$`Original cell type`)) {
+unique(tsData@meta.data$tissue_in_publication[tsData@meta.data$compartment == "endothelial"])
+
+unique(tsData@meta.data$cell_ontology_class[tsData@meta.data$tissue_in_publication == "Heart"])
+
+unique(tsData@meta.data$cell_ontology_class[tsData@meta.data$tissue_in_publication == "Large_Intestine" & tsData@meta.data$compartment == "epithelial"])
+
+clType <- cellTypes$original
+
+for (cell in cellTypes$original) {
   for (name in names(cluster)) {
-    if (level %in% unlist(cluster[[name]])) {
+    if (cell %in% unlist(cluster[[name]])) {
       clType[clType %in% unlist(cluster[[name]])] <- name
     }
   }
 }
 
-cellTypes$`Group cell type` <- as.character(factor(clType, levels = names(cluster)))
+cellTypes$cluster <- factor(clType, levels = names(cluster))
 
-cellTypes$`Original cell type` <- as.character(cellTypes$`Original cell type`)
+cellTypes$original[is.na(cellTypes$cluster)]
 
-cellTypes$`Group cell type` <- ifelse(is.na(cellTypes$`Group cell type`), cellTypes$`Original cell type`, cellTypes$`Group cell type`)
+
+
+
+
+cellTypes$Cluster <- as.character(cellTypes$Original)
+
+cellTypes$Group <- ifelse(is.na(cellTypes$Group), cellTypes$Original, cellTypes$Group)
 
 after <- before
-
 #FIND A FASTER WAY TO ACHIEVE THIS
 for(i in seq_along(before$`Idents(tsData)`)){
   for(n in seq_along(cellTypes$`Original cell type`)){
@@ -174,6 +320,27 @@ dev.off()
 
 freqGroup1 <- as.data.frame(table(after$`Idents(tsData)`))
 
+```
+
+```{r}
+# Check tissue taken from male or female.
+table(tsData@meta.data$sex[tsData@meta.data$tissue_in_publication == "Kidney"]) # All female
+
+table(tsData@meta.data$sex[tsData@meta.data$tissue_in_publication == "Large_Intestine"]) # Male 11439 (83.6%) and female 2241 (16.4%)
+
+table(tsData@meta.data$sex[tsData@meta.data$tissue_in_publication == "Liver"]) # All male
+
+table(tsData@meta.data$sex[tsData@meta.data$tissue_in_publication == "Lung"]) # Male 4350 (12.2%) and female (87.8%)
+
+table(tsData@meta.data$sex[tsData@meta.data$tissue_in_publication == "Mammary"]) # All female
+
+table(tsData@meta.data$sex[tsData@meta.data$tissue_in_publication == "Pancreas"]) # Male 6699 (49.6%) and female 6798 (50.4%)
+
+table(tsData@meta.data$sex[tsData@meta.data$tissue_in_publication == "Prostate"]) # All male
+
+table(tsData@meta.data$sex[tsData@meta.data$tissue_in_publication == "Small_Intestine"]) # Male 10458 (83.9%) and female (16.1%)
+
+table(tsData@meta.data$sex[tsData@meta.data$tissue_in_publication == "Uterus"]) # All female
 ```
 
 To do:
