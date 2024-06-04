@@ -37,6 +37,22 @@ neutCellTypes <- read.delim("output/scaden_neutrophils/format_files/scadenNeutro
 
 ```
 
+## Deconvolution with Scaden - example data
+
+```{bash}
+scaden simulate --data output/example/ -n 100 --pattern "*_counts.txt" --out output/example/
+
+scaden process output/example/data.h5ad output/example/example_bulk_data.txt --processed_path output/example/processed.h5ad
+
+scaden train output/example/processed.h5ad --steps 5000 --model_dir output/example/model/
+
+scaden predict --model_dir output/example/model/ output/example/example_bulk_data.txt
+```
+
+```{bash}
+scaden simulate --data output/scaden_ctRNA/format_files/ -n 100 --pattern "*_counts.txt" --out output/scaden_ctRNA/simulated_data/
+```
+
 ## Deconvolution with Scaden
 
 NEED TO ADD THAT THE FILE OUT OF SIMULATE NAME NEEDS TO BE ALTERED FOR DIFFERENT TYPES.
@@ -45,9 +61,9 @@ NEED TO ADD THAT THE FILE OUT OF SIMULATE NAME NEEDS TO BE ALTERED FOR DIFFERENT
 source functions/functions_bash.sh
 set -e
 
-typeDeconv="scaden_plaque" # Main folder
-pattern="scaden" # Pattern of input files as recognized by Scaden
-celltypes="7" # Number of cell types in scRNA-seq reference
+typeDeconv="scaden_ctRNA" # Main folder
+pattern="scadenCtRNA" # Pattern of input files as recognized by Scaden
+celltypes="18" # Number of cell types in scRNA-seq reference
 nBulk="1000" # Size training set
 
 dirPathFiles="output/$typeDeconv/format_files"
@@ -55,7 +71,7 @@ dirPathSimul="output/$typeDeconv/simulated_data"
 dirPathModel="output/$typeDeconv/trained_models"
 dirPathPred="output/$typeDeconv/predictions"
 
-for i in {1..30}
+for i in {1..2}
 do
   scaden simulate -n $nBulk --pattern "*_counts.txt" --data $dirPathFiles --out $dirPathSimul
   
@@ -72,6 +88,26 @@ do
   emptyDir $dirPathSimul $i
   
   emptyDir $dirPathModel $i
+done
+```
+
+```{bash}
+source functions/functions_bash.sh
+set -e
+
+typeDeconv="scaden_ctRNA" # Main folder
+pattern="scadenCtRNA" # Pattern of input files as recognized by Scaden
+celltypes="18" # Number of cell types in scRNA-seq reference
+nBulk="1000" # Size training set
+
+dirPathFiles="output/$typeDeconv/format_files"
+dirPathSimul="output/$typeDeconv/simulated_data"
+dirPathModel="output/$typeDeconv/trained_models"
+dirPathPred="output/$typeDeconv/predictions"
+
+for i in {1..2}
+do
+  scaden simulate -n $nBulk --pattern "*_counts.txt" --data $dirPathFiles --out $dirPathSimul
 done
 ```
 
