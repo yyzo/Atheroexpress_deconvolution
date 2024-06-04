@@ -1,0 +1,621 @@
+---
+title: "Data_preprocessing_cfRNA"
+author: "Yayuan Zhu"
+date: "2024-05-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+...
+
+## Setup
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(magrittr)
+library(Seurat)
+library(stringr)
+library(scCustomize) # ADD CITATION OF THIS PACKAGE (samuel-marsh.github.io/scCustomize/articles/FAQ.html)
+
+# source("functions/functions_R.R")
+```
+
+## Description data collection
+
+| Data                              | Source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Date obtained (dd/mm/yyyy) |
+|-------------|-----------------------------------------------|-------------|
+| Bulk RNA-sequencing data          | In-house                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 16/01/2024                 |
+| HGNC complete set                 | HGNC ([URL](HGNC%20https://ftp.ebi.ac.uk/pub/databases/genenames/hgnc/archive/monthly/tsv/hgnc_complete_set_2024-01-01.txt))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | 16/01/2024                 |
+| Non-coding RNA list               | HGNC, filtered on non-coding RNA ([URL](https://www.genenames.org/tools/search/#!/?query=&rows=20&start=0&filter=locus_group:%22Non-coding%20RNA%22))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | 16/01/2024                 |
+| AtheroExpress patient data        | In-house                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 15/03/2024                 |
+| AtheroExpress patient data        | In-house                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 15/03/2024                 |
+| Single-cell RNA-sequencing data   | Tabula Sapiens - All Cells ([URL](https://datasets.cellxgene.cziscience.com/b84def55-a776-4aa4-a9a6-7aab8b973086.rds))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | 01/05/2024                 |
+| Single-nuclei RNA-sequencing data | Emont MP, Jacobs C, Essene AL, Pant D, Tenen D, Colleluori G, Di Vincenzo A, Jørgensen AM, Dashti H, Stefek A, McGonagle E, Strobel S, Laber S, Agrawal S, Westcott GP, Kar A, Veregge ML, Gulko A, Srinivasan H, Kramer Z, De Filippis E, Merkel E, Ducie J, Boyd CG, Gourash W, Courcoulas A, Lin SJ, Lee BT, Morris D, Tobias A, Khera AV, Claussnitzer M, Pers TH, Giordano A, Ashenberg O, Regev A, Tsai LT, Rosen ED. A single-cell atlas of human and mouse white adipose tissue. Nature. 2022 Mar;603(7903):926-933. doi: 10.1038/s41586-022-04518-2. Epub 2022 Mar 16. Erratum in: Nature. 2023 Aug;620(7973):E14. PMID: 35296864; PMCID: PMC9504827. ([URL](https://singlecell.broadinstitute.org/single_cell/study/SCP1376/a-single-cell-atlas-of-human-and-mouse-white-adipose-tissue#study-summary)) | 21/05/2024                 |
+
+## Base scRNA-seq reference
+
+### Tabula Sapiens
+
+The original Tabula Sapiens dataset consists of 58482 genes and contains a total of 483152 cells. Directly subsetting it results in ... cells. This is based on prior analysis of the dataset and has been decided to be done in this particular manner due to the lack of RAM.
+
+```{r}
+tsData <- read_rds("input/Tabula_Sapiens/Tabula_Sapiens_all_cells.rds") # 58482 genes, 483152 cells, 31.4 GB, 2.44 min
+
+tsCounts <- tsData[["RNA"]]$counts
+
+tsCellTypes <- as.data.frame(Idents(tsData)) %>%
+  rename(original = `Idents(tsData)`)
+
+tsMetadata <- tsData@meta.data
+
+tsData@meta.data <- tsData@meta.data %>%
+    rename(nFeature_RNA = nFeaturess_RNA, nCount_RNA = nCounts_RNA_UMIs)
+
+Idents(tsData) <- tsData@meta.data$cell_ontology_class
+
+QC_Plot_UMIvsGene(tsData,                    
+                  low_cutoff_gene = 1000,                   
+                  high_cutoff_gene = 5000,                    
+                  low_cutoff_UMI = 2500,                   
+                  high_cutoff_UMI = 15000) +
+  theme(legend.position = "none") +
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+```{r}
+freq <- as_tibble(table(original = tsMetadata$cell_ontology_class))
+
+cellTypes <- tsMetadata %>%
+  distinct(cell_ontology_class, .keep_all = TRUE)%>%
+  select(cell_ontology_class, compartment) %>%
+  rename(original = cell_ontology_class) %>%
+  left_join(freq, by = "original")
+
+patterns <- list(
+  "Monocyte" = "(?i)dendritic|monocyte|macrophage|langerhans",
+  "Mesenchymal cell/fibroblast" = "(?i)limbal stromal|tendon|fibroblast|stellate|keratocyte|adventitial|mesenchymal",
+  "Skeletal muscle cell" = "(?i)[^hc] muscle",
+  "B cell" = "(?i)(^|\\b)b\\scell|plasma[^c]",
+  "Platelet" = "(?i)platelet",
+  "Basophil/mast cell" = "(?i)basophil|mast",
+  "Neural cell" = "(?i)ganglion|horizontal|eye|neuron|glial|schwann|muller",
+  "Neutrophil" = "(?i)neutrophil",
+  "Erythrocyte" = "(?i)erythrocyte",
+  "Cardiac muscle cell" = "(?i)cardiac muscle",
+  "Pericyte/smooth muscle cell" = "(?i)smooth|myometrial|pericyte",
+  "T/NK cell" = "(?i)(nk)|(natural)|(thymocyte)|((\\A|\\W)t cell)|(follicular)",
+  "Kidney epithelial cell" = "(?i)kidney",
+  "Enterocyte" = "(?i)^(enterocyte|mature enterocyte)",
+  "Hepatocyte" = "(?i)hepatocyte", # In Seurat Object, remove the ones from heart.
+  "Pancreatic epithelial cell" = "(?i)pancreatic (ductal|acinar)",
+  "Pneumocyte" = "(?i)pneumocyte",
+  "Endothelial cell" = function(data) as.vector(data$original[data$compartment == "endothelial"])
+)
+
+cluster <- lapply(patterns, function(pattern) {
+  if (is.function(pattern)) {
+    pattern(cellTypes)
+  } else{
+    str_subset(cellTypes$original, pattern)
+  }
+})
+
+clType <- cellTypes$original
+
+for (name in names(cluster)) {
+  clType[clType %in% unlist(cluster[[name]])] <- name
+}
+
+cellTypes$cluster18 <- factor(clType, levels = names(cluster))
+
+# Create a column with 14 cell types.
+cellTypes$cluster14 <- cellTypes$cluster18
+
+epithelialCells <- c("Kidney epithelial cell", "Enterocyte", "Hepatocyte", "Pancreatic epithelial cell", "Pneumocyte")
+
+cellTypes <- cellTypes %>%
+  mutate(cluster14 = ifelse(cluster14 %in% epithelialCells, "Epithelial cell", as.character(cluster14)))
+
+cellTypes$cluster14 <- as.factor(cellTypes$cluster14)
+```
+
+```{r}
+cellsToRemove <- tsMetadata %>%
+  filter(tissue_in_publication == "Heart" & cell_ontology_class == "hepatocyte") %>%
+  rownames() %>%
+  as.vector() %>%
+  c(
+    tsCellTypes %>%
+      filter(!(original %in% unlist(cluster))) %>%
+      rownames()
+  )
+
+tsCountsFilter <- tsCounts[, !colnames(tsCounts) %in% cellsToRemove]
+
+tsCellTypesFilter <- tsCellTypes[!rownames(tsCellTypes) %in% cellsToRemove, , drop = FALSE]
+
+rm(tsCounts, tsCellTypes, tsMetadata)
+gc()
+
+tsCellTypesFilter$original <- as.character(tsCellTypesFilter$original)
+
+tsCellTypesFilter$cluster18 <- tsCellTypesFilter$original
+
+for (name in names(cluster)) {
+  cells <- unlist(cluster[[name]])
+
+  tsCellTypesFilter$cluster18[tsCellTypesFilter$original %in% cells] <- name
+}
+
+# 14 cell types
+tsCellTypesFilter$cluster14 <- tsCellTypesFilter$cluster18
+
+tsCellTypesFinal <- tsCellTypesFilter %>%
+  mutate(cluster14 = ifelse(cluster14 %in% epithelialCells, "Epithelial cell", cluster14))
+
+rm(tsCellTypesFilter)
+```
+
+```{r}
+load("output/export_files/AE_bulk_data_654patients_filterRNA_notfinal.RData")
+
+geneKeep <- intersect(rownames(tsCountsFilter), bulkFilter$ensembl_gene_id)
+
+bulkFinal <- bulkFilter %>%
+  filter(ensembl_gene_id %in% geneKeep) %>%
+  column_to_rownames("ensembl_gene_id")%>%
+  select(-symbol)
+
+tsCountsFinal <- tsCountsFilter[rownames(tsCountsFilter) %in% geneKeep, , drop = FALSE]
+
+rm(tsCountsFilter)
+gc()
+```
+
+```{r}
+# hgncMito <- read_delim("input/HGNC_mitochondrial_genome.txt") #https://www.genenames.org/data/genegroup/#!/group/1972 , 03-06-2024
+
+# mitoGenes <- hgncMito$`Ensembl gene ID`[!(is.na(hgncMito$`Ensembl gene ID`))]
+```
+
+#### Organs
+
+| Organ           | Original:               | Filter mito \< 5:       | 80th percentile: | 0.88 corr: |
+|---------------|---------------|---------------|---------------|---------------|
+| Bladder         | 1.7 GB \| 24583 cells   | 95.9 MB \| 1458 cells   | 839.6 MB \|      | 1 GB       |
+| Blood           | 2.4 GB \| 50115 cells   | 382.4 MB \| 11178 cells | 1.6 GB \|        | 1.9 GB     |
+| Bone marrow     | 781.1 MB \| 12297 cells | 178.4 MB \| 3404 cells  | 412.5 MB \|      | 466.3 MB   |
+| Eye             | 904.3 MB \| 10650 cells | 68.8 MB \| 786 cells    | 290.9 MB \|      | 400.4 MB   |
+| Fat             | 1.7 GB \| 20263 cells   | 74.8 MB \| 953 cells    | 581.5 MB \|      | 1 GB       |
+| Heart           | 1.1 GB \| 11505 cells   | 58.7 MB \| 607 cells    | 296.2 MB \|      | 418.8 MB   |
+| Kidney          | 678.2 MB \| 9641 cells  | 26.9 MB \| 1 cell       | 388.4 MB \|      | 541.9 MB   |
+| Large intestine | 703.5 MB \| 13680 cells | 48.4 MB \| 622 cells    | 482.3 MB \|      | 511.8 MB   |
+| Liver           | 325 MB \| 5007 cells    | 39.6 MB \| 298 cells    | 231.3 MB \|      | 257.7 MB   |
+| Lung            | 3 GB \| 35682 cells     | 260.2 MB \| 4633 cells  | 930.6 MB \|      | 1.5 GB     |
+| Lymph node      | 2.8 GB \| 53275 cells   | 393.9 MB \| 8967 cells  | 2.2 GB \|        | 2.3 GB     |
+| Mammary         | 751.5 MB \| 11375 cells | 78.4 MB \| 1207 cells   | 392.5 MB \|      | 532.5 MB   |
+| Muscle          | 1.9 GB \| 30746 cells   | 51.1 MB \| 539 cells    | 1.2 GB \|        | 1.5 GB     |
+| Pancreas        | 1.1 GB \| 13497 cells   | 89.7 MB \| 1286 cells   | 351.1 MB \|      | 504 MB     |
+| Prostate        | 1.1 GB \| 16375 cells   | 156.4 MB \| 2827 cells  | 643.1 MB \|      | 788.5 MB   |
+| Salivary gland  | 1.7 GB \| 27199 cells   | 145.5 MB \| 4779 cells  | 807 MB \|        | 943 MB     |
+| Skin            | 545.7 MB \| 9424 cells  | 157.3 MB \| 3059 cells  | 361 MB \|        | 411.7 MB   |
+| Small intestine | 677.3 MB \| 12467 cells | 45.9 MB \| 470 cells    | 491.6 MB \|      | 520.9 MB   |
+| Spleen          | 2.1 GB \| 34004 cells   | 324.7 MB \| 7549 cells  | 1.3 GB \|        | 1.5 GB     |
+| Thymus          | 2.1 GB \| 33664 cells   | 482.7 MB \| 9201 cells  | 1.4 GB \|        | 1.7 GB     |
+| Tongue          | 1.3 GB \| 15020 cells   | 46.1 MB \| 449 cells    | 617.5 MB \|      | 698.1 MB   |
+| Trachea         | 710.5 MB \| 9522 cells  | 105.7 MB \| 1761 cells  | 330.7 MB \|      | 465.6 MB   |
+| Uterus          | 579.5 MB \| 7124 cells  | 55.1 MB \| 554 cells    | 247.6 MB \|      | 338.4 MB   |
+| Vasculature     | 1.5 GB \| 16037 cells   | 136.1 MB \| 1963 cells  | 392.1 MB \|      | 748.7 MB   |
+| All             | 31.4 GB \| 483152 cells | 2.8 GB \| 68551 cells   |                  |            |
+
+```{r}
+start.time <- Sys.time()
+
+organs <- c("bladder", "blood", "bone_marrow", "eye", "fat", "heart", "kidney", "large_intestine", "liver", "lung", "lymph_node", "mammary", "muscle", "pancreas", "prostate", "salivary_gland", "skin", "small_intestine", "spleen", "thymus", "tongue", "trachea", "uterus", "vasculature")
+
+firstIteration <- TRUE
+tsObjects <- c()
+
+for (organ in organs) {
+  path <- paste0("input/Tabula_Sapiens/Tabula_Sapiens_", organ, ".rds")
+  obj <- readr::read_rds(path)
+  
+  obj@meta.data <- obj@meta.data %>%
+    rename(nFeature_RNA = nFeaturess_RNA, nCount_RNA = nCounts_RNA_UMIs)
+  
+  # obj[["percent_mito"]] <- PercentageFeatureSet(obj, features = mitoGenes) 
+  # Yields same results as Add_Mito_Ribo()
+  
+  obj <- obj %>%
+    subset(nFeature_RNA > 1000 & nFeature_RNA < 5000 & nCount_RNA < 15000)
+  
+  Idents(obj) <- obj@meta.data$cell_ontology_class
+  
+  name <- paste0("ts", str_to_title(organ))
+  assign(name, obj)
+  
+  if(firstIteration) {
+    firstIteration <- FALSE
+    next
+  }
+  
+  tsObjects <- c(tsObjects, list(obj))
+}
+
+rm(obj)
+gc()
+
+tsAll <- merge(tsBladder, y = tsObjects, project = "Tabula_Sapiens_all_cells_filtered")%>%
+  Add_Mito_Ribo(object = ., species = "human", ensembl_ids = TRUE)
+
+# tsAll <- Merge_Seurat_List(list_seurat = tsObjects,
+#                            project = "Tabula_Sapiens_all_cells_filtered") %>%
+#   Add_Mito_Ribo(object = ., species = "human", ensembl_ids = TRUE)
+
+# Mito filter (< 5): 58482 genes, 68551 cells, 2.8 GB, 4.67 min
+# No mito filter(< 7000, < 10000): 58482 genes, 291069 cells, 13.5 GB, 17.01 min
+# nFeature_RNA < 5000, nCount_RNA < 10000: 58482 genes, 291069 cells, 16.26 min
+# 99th percentile (< 7086 genes, < 1246117 UMIs): unable to merge all, cannot allocate vector of size 2.1 GB
+# 75th percentile (< 3204 genes, < 15157 UMIs): 328403 cells, 15.7 GB
+# 0.88 correlation: cannot allocate vector of size 3.8 GB (using scCustomize merge)
+# 0.87 correlation: 338585 cells, 18.1 GB, 22.72 min
+
+end.time <- Sys.time()
+time.taken <- round(end.time - start.time,2)
+time.taken
+
+# save(tsAll, file = "output/export_files/TS_manual_all_5000F_15000C.rds") 
+```
+
+In the R code above, it iterates over all the Tabula Sapiens datasets and filters each of them until eventually combining them. The filters applied are nFeature_RNA \> 1000 & nFeature_RNA \< 5000 & nCount_RNA \< 15000.
+
+Use the code below to obtain the merged and filtered Tabula Sapiens scRNA-seq dataset.
+
+```{r}
+load("output/export_files/TS_manual_all_5000F_15000C.rds")
+```
+
+**NOTE TO SELF**
+
+Merge() just merges the counts (which requires renormalization) whereas the Merge_Seurat_List merges the data slots (recommended for objects with the same normalization approach). The second function sounds better but I'm not sure if they also did that when obtaining the Tabula_sapiens_all_cells object. Check some columns of both datasets (own and downloaded) to see if they are the same.
+
+#### Quality control
+
+```{r}
+QC_Plot_UMIvsGene(tsAll) +
+  theme(legend.position = "none")
+
+QC_Plot_GenevsFeature(tsAll, 
+                      feature1 = "percent_mito", 
+                      high_cutoff_feature = 20) +
+  theme(legend.position = "none") +
+  scale_x_log10()
+
+# As the values obtained in percent_mito obtain very large values and the assumption that the authors would include high quality cells clash with each other, I won't filter on the mitochondrial% at thie point in time.
+QC_Histogram(tsAll, 
+             features = "percent_mito", 
+             low_cutoff = 25) +
+  xlim(0, 100)
+
+# test <- tsAll[["RNA"]]$counts[, 1:3]
+```
+
+```{r}
+{r}
+rm(list=setdiff(ls(), "tsAll"))
+gc()
+
+tsCounts <- tsAll[["RNA"]]$counts
+
+tsCellTypes <- as.data.frame(Idents(tsAll)) %>%
+  rename(original = `Idents(tsAll)`)
+
+tsMetadata <- tsAll@meta.data
+
+rm(tsAll)
+gc()
+```
+
+#### Cluster cell types - arbitrary
+
+Cell types were only included in the clustering of the Tabula Sapiens single-cell RNA-sequencing (scRNA-seq) dataset if they did not fall under one of the following criteria:
+
+-   The cluster/cell type has a frequency below 100 cells.
+
+    -   In other words, the removal of cells based on the frequency will occur before and after the cells have been clustered. The inclusion of rare cell types may have an effect on the following cellular deconvolution.
+
+-   The annotation is too broad and annotations at a finer resolution are present, e.g. "immune cell" or "connective tissue cell".
+
+-   The annotation describes a structure and is not a distinct cell type, e.g. "ciliary body" or "lacrimal gland functional unit cell".
+
+-   The cell type deemed not relevant enough to the cardiovascular health, e.g. "melanocyte".
+
+-   The cell type does not typify the respective organ.
+
+Below, a data frame will be created with an overview of the desired clustering.
+
+```{r}
+freq <- as_tibble(table(original = tsMetadata$cell_ontology_class))
+
+cellTypes <- tsMetadata %>%
+  distinct(cell_ontology_class, .keep_all = TRUE)%>%
+  select(cell_ontology_class, compartment) %>%
+  rename(original = cell_ontology_class) %>%
+  left_join(freq, by = "original")
+
+patterns <- list(
+  "Monocyte" = "(?i)dendritic|monocyte|macrophage|langerhans",
+  "Mesenchymal cell/fibroblast" = "(?i)limbal stromal|tendon|fibroblast|stellate|keratocyte|adventitial|mesenchymal",
+  "Skeletal muscle cell" = "(?i)[^hc] muscle",
+  "B cell" = "(?i)(^|\\b)b\\scell|plasma[^c]",
+  "Platelet" = "(?i)platelet",
+  "Basophil/mast cell" = "(?i)basophil|mast",
+  "Neural cell" = "(?i)ganglion|horizontal|eye|neuron|glial|schwann|muller",
+  "Neutrophil" = "(?i)neutrophil",
+  "Erythrocyte" = "(?i)erythrocyte",
+  "Cardiac muscle cell" = "(?i)cardiac muscle",
+  "Pericyte/smooth muscle cell" = "(?i)smooth|myometrial|pericyte",
+  "T/NK cell" = "(?i)(nk)|(natural)|(thymocyte)|((\\A|\\W)t cell)|(follicular)",
+  "Kidney epithelial cell" = "(?i)kidney",
+  "Enterocyte" = "(?i)^(enterocyte|mature enterocyte)",
+  "Hepatocyte" = "(?i)hepatocyte", # In Seurat Object, remove the ones from heart.
+  "Pancreatic epithelial cell" = "(?i)pancreatic (ductal|acinar)",
+  "Pneumocyte" = "(?i)pneumocyte",
+  "Endothelial cell" = function(data) as.vector(data$original[data$compartment == "endothelial"])
+)
+
+cluster <- lapply(patterns, function(pattern) {
+  if (is.function(pattern)) {
+    pattern(cellTypes)
+  } else{
+    str_subset(cellTypes$original, pattern)
+  }
+})
+
+clType <- cellTypes$original
+
+for (name in names(cluster)) {
+  clType[clType %in% unlist(cluster[[name]])] <- name
+}
+
+cellTypes$cluster18 <- factor(clType, levels = names(cluster))
+
+# Create a column with 14 cell types.
+cellTypes$cluster14 <- cellTypes$cluster18
+
+epithelialCells <- c("Kidney epithelial cell", "Enterocyte", "Hepatocyte", "Pancreatic epithelial cell", "Pneumocyte")
+
+cellTypes <- cellTypes %>%
+  mutate(cluster14 = ifelse(cluster14 %in% epithelialCells, "Epithelial cell", as.character(cluster14)))
+
+cellTypes$cluster14 <- as.factor(cellTypes$cluster14)
+```
+
+In the Tabula Sapiens scRNA-seq dataset, the annotation of hepatocyte is found in both the liver and the heart. As hepatocyte are highly unlikely to be found in the heart, cells from the heart with this annotation will be removed first. Furthermore, cells that are not present included in the cell types used to create the clusters will be removed.
+
+```{r}
+cellsToRemove <- tsMetadata %>%
+  filter(tissue == "cardiac atrium" & cell_ontology_class == "hepatocyte" | tissue == "cardiac ventricle" & cell_ontology_class == "hepatocyte") %>%
+  rownames() %>%
+  as.vector() %>%
+  c(
+    tsCellTypes %>%
+      filter(!(original %in% unlist(cluster))) %>%
+      rownames()
+  )
+
+CAP THE FREQUENCY OF THE CELL TYPES TO 5000!!!!
+
+
+
+
+
+
+tsCountsFilter <- tsCounts[, !colnames(tsCounts) %in% cellsToRemove]
+
+tsCellTypesFilter <- tsCellTypes[!rownames(tsCellTypes) %in% cellsToRemove, , drop = FALSE]
+
+rm(tsCounts, tsCellTypes, tsMetadata)
+gc()
+
+tsCellTypesFilter$original <- as.character(tsCellTypesFilter$original)
+
+tsCellTypesFilter$cluster18 <- tsCellTypesFilter$original
+
+for (name in names(cluster)) {
+  cells <- unlist(cluster[[name]])
+
+  tsCellTypesFilter$cluster18[tsCellTypesFilter$original %in% cells] <- name
+}
+
+# 14 cell types
+tsCellTypesFilter$cluster14 <- tsCellTypesFilter$cluster18
+
+tsCellTypesFinal <- tsCellTypesFilter %>%
+  mutate(cluster14 = ifelse(cluster14 %in% epithelialCells, "Epithelial cell", cluster14))
+
+rm(tsCellTypesFilter)
+```
+
+Thereafter, the scRNA-seq dataset will be matched to the bulk RNA-seq based on genes present in both datasets.
+
+```{r}
+load("output/export_files/AE_bulk_data_654patients_filterRNA_notfinal.RData")
+
+geneKeep <- intersect(rownames(tsCountsFilter), bulkFilter$ensembl_gene_id)
+
+bulkFinal <- bulkFilter %>%
+  filter(ensembl_gene_id %in% geneKeep) %>%
+  column_to_rownames("ensembl_gene_id")%>%
+  select(-symbol)
+
+tsCountsFinal <- tsCountsFilter[rownames(tsCountsFilter) %in% geneKeep, , drop = FALSE]
+
+rm(tsCountsFilter)
+gc()
+```
+
+Remove columns/rows of the counts file where all values are 0.
+
+```{r}
+table(rowSums(tsCountsFinal) > 0)
+
+tsCountsFinal2 <- tsCountsFinal[rowSums(tsCountsFinal) > 0, ]
+
+geneKeep2 <- intersect(rownames(tsCountsFinal2), bulkFilter$ensembl_gene_id)
+
+bulkFinal2 <- bulkFilter %>%
+  filter(ensembl_gene_id %in% geneKeep2) %>%
+  column_to_rownames("ensembl_gene_id")%>%
+  select(-symbol)
+
+rm(bulkFilter, bulkFinal, tsCountsFinal)
+```
+
+### Export files
+
+```{r}
+tsCountsFinal3 <- tsCountsFinal2 %>%
+  as.data.frame() %>%
+  t()
+
+# Cannot allocate vector of size 40.6 GB
+
+table(rownames(tsCountsFinal) == rownames(tsCellTypesFinal))
+
+rownames(tsCountsFinal) <- NULL
+
+writeMM(tsCountsFinal,
+        file = "output/scaden_ctRNA/format_files/scadenCtRNA_counts.txt")
+
+tsCellTypes18 <- tsCellTypesFinal %>%
+  select(cluster18) %>%
+  rename(Celltype = cluster18)
+
+write.table(tsCellTypes18,
+            file = "output/scaden_ctRNA/format_files/scadenCtRNA_celltypes.txt",
+            sep = "\t", row.names = FALSE)
+
+write.table(bulkFinal,
+            file = "output/scaden_ctRNA/format_files/scadenCtRNA_bulk_data.txt",
+            sep = "\t")
+```
+
+### Reduce scRNA-seq dataset
+
+```{r}
+reduceCellTypeFreq <- cellTypes$original[cellTypes$n > 5000 & !(is.na(cellTypes$cluster18))]
+
+nRemove <- 0
+
+for(celltype in reduceCellTypeFreq) {
+  nRemove <- nRemove + (cellTypes$n[cellTypes$original == celltype] - 5000)
+} # Left over with 206098 cells (395913 - 189815)
+
+
+
+
+cellsToRemove2 <- c()
+
+for(celltype in reduceCellTypeFreq) {
+  total <- sum(str_count(tsCellTypesFinal$original, celltype))
+  reduce <- total - 10000
+  n <- 0
+  
+  while(n != reduce) {
+    for(i in 1:nrow(tsCellTypesFinal)) {
+      if(celltype == tsCellTypesFinal$original[i]) {
+        cellsToRemove2 <- c(cellsToRemove2, tsCellTypesFinal$cellID[i])
+        
+        n <- n + 1
+      }
+    }
+  }
+}
+
+
+```
+
+### UMAP graph - highlight cells
+
+```{r}
+pattern <- "(?i)kidney epithelial cell"
+title <- "Kidney epithelial cells"
+plot <- highlightCellsUMAP(tsData, "cell_ontology_class", pattern, title)
+# cells <- as.vector(cellTypes$`Original cell type`[cellTypes$compartment == "endothelial"])
+# plot <- highlightCompartmentUMAP(tsData, cells, title)
+
+tiff(paste0("output/figures/Tabula_Sapiens/", title, ".tiff"),
+     width = 1280,
+     height = 720,
+     unit = "px")
+
+print(plot)
+
+dev.off()
+```
+
+To do:
+
+-   Add brain data + fat data
+
+-   Separate epithelial cells for organs that are important for cardiovascular health (e.g. kidney, endocrine, lung, liver)
+
+    -   Look for articles to back up that the cell types of these organs have something to do with cardiovascular health.
+
+```{r}
+compartmentUMAP <- tsData
+
+Idents(compartmentUMAP) <- tsData@meta.data$compartment
+
+compartmentPlot <- DimPlot(compartmentUMAP,
+                           reduction = "umap",
+                           raster = FALSE) +
+  labs(title = "Compartments")
+
+tiff(paste0("output/figures/Tabula_Sapiens/compartments.tiff"),
+     width = 1280,
+     height = 720,
+     unit = "px")
+
+print(compartmentPlot)
+
+dev.off()
+```
+
+## Cluster - ChatGPT
+
+```{r}
+
+```
+
+## Cluster - hierarchical clustering
+
+## ADIPOCYTE
+
+As the Tabula Sapiens single-cell RNA-seqencing (scRNA-seq) data only contains 44 adipocytes, additional single-nuclei RNA-sequencing (snRNA-seq) data of adipocytes from white adipose tissue will be integrated [Emont *et al.* (2023)]. Additionally, the same will be done for cell types present in the brain and the testis as these tissues are absent from the Tabula Sapiens dataset.
+
+# Brain
+
+# ...
+
+# 
+
+# Testis
+
+```         
+
+## Quality control external data
+
+### Adipocyte
+
+```{# tiff("output/figures/Emont2023_all_snRNA.tiff", #      width = 720, #      height = 720, #      unit = "px")  DimPlot_scCustom(adipocyteData,                  reduction = "umap",                  label.box = TRUE,                  repel = TRUE)  # dev.off()  # tiff("output/figures/Emont2023_QC_all.tiff", #      width = 1920, #      height = 1080, #      unit = "px")  QC_Plots_Combined_Vln(adipocyteData,                        feature_cutoffs = c(200, 3500),                        UMI_cutoffs = c(500, 15000),                        mito_cutoffs = 5,                       mito_name = "mt.percent",                       plot_boxplot = TRUE)  # dev.off()  onlyAdipocyte <- readRDS("input/human_adipocytes_lite.rds")  # tiff("output/figures/Emont2023_QC_adipocyte_sub.tiff", #      width = 1920, #      height = 1080, #      unit = "px")  QC_Plots_Combined_Vln(onlyAdipocyte,                        feature_cutoffs = c(200, 3500),                        UMI_cutoffs = c(500, 15000),                        mito_cutoffs = 5,                       mito_name = "mt.percent",                       plot_boxplot = TRUE)  # dev.off()  tiff("output/figures/Emont2023_QC_adipocyte_sub_UMIvsGene.tiff",      width = 720,      height = 720,      unit = "px")  QC_Plot_UMIvsGene(onlyAdipocyte,                    low_cutoff_gene = 200,                   high_cutoff_gene = 3500,                    low_cutoff_UMI = 500,                   high_cutoff_UMI = 15000)  dev.off()  tiff("output/figures/Emont2023_QC_adipocyte_sub_GenevsMito.tiff",      width = 720,      height = 720,      unit = "px")  QC_Plot_GenevsFeature(onlyAdipocyte,                        feature1 = "mt.percent",                       low_cutoff_gene = 200,                       high_cutoff_gene = 3500,                        high_cutoff_feature = 5)  dev.off()  # Keep nuclei with less than 5% mitochondrial genes expressed; limits the waste due to possible contamination. adipocyteFilter <- subset(onlyAdipocyte,                           nFeature_RNA > 200 & nFeature_RNA < 3500 &                           nCount_RNA > 500 & nCount_RNA < 15000 &                           mt.percent < 5)}
+```
+
+## 
