@@ -16,8 +16,8 @@ Creating pseudo bulk mixtures for training of the algorithm and performing the d
 ### Setup
 
 ```{r message=FALSE, warning=FALSE}
-library(magrittr)
 library(tidyverse)
+library(magrittr)
 
 source("functions/functions_R.R")
 ```
@@ -34,56 +34,53 @@ neutBulk <- read.delim("output/scaden_neutrophils/format_files/scadenNeutrophil_
 neutCounts <- read.delim("output/scaden_neutrophils/format_files/scadenNeutrophil_counts.txt")
 neutCellTypes <- read.delim("output/scaden_neutrophils/format_files/scadenNeutrophil_celltypes.txt")
 
-
+ctBulk <- read.delim("output/scaden_ctRNA/format_files/scadenCtRNA_bulk_data.txt")
+ctCounts <- read.delim("output/scaden_ctRNA/format_files/scadenCtRNA_counts.txt")
+ctCellTypes <- read.delim("output/scaden_ctRNA/format_files/scadenCtRNA_celltypes.txt")
 ```
 
 ## Deconvolution with Scaden - example data
 
 ```{bash}
-scaden simulate --data output/example/ -n 100 --pattern "*_counts.txt" --out output/example/
-
-scaden process output/example/data.h5ad output/example/example_bulk_data.txt --processed_path output/example/processed.h5ad
-
-scaden train output/example/processed.h5ad --steps 5000 --model_dir output/example/model/
-
-scaden predict --model_dir output/example/model/ output/example/example_bulk_data.txt
+mkdir example_data
+scaden example --out example_data/
 ```
 
 ```{bash}
-scaden simulate --data output/scaden_ctRNA/format_files/ -n 100 --pattern "*_counts.txt" --out output/scaden_ctRNA/simulated_data/
+scaden simulate --data example_data/ -n 100 --pattern "*_counts.txt"
+
+scaden process data.h5ad example_data/example_bulk_data.txt
+
+scaden train processed.h5ad --steps 50 --model_dir model
+
+scaden predict --model_dir model example_data/example_bulk_data.txt
 ```
-
-## Deconvolution with Scaden
-
-NEED TO ADD THAT THE FILE OUT OF SIMULATE NAME NEEDS TO BE ALTERED FOR DIFFERENT TYPES.
 
 ```{bash}
 source functions/functions_bash.sh
 set -e
 
-typeDeconv="scaden_ctRNA" # Main folder
-pattern="scadenCtRNA" # Pattern of input files as recognized by Scaden
-celltypes="18" # Number of cell types in scRNA-seq reference
-nBulk="1000" # Size training set
+typeDeconv="example" # Main folder
+pattern="example" # Pattern of input files as recognized by Scaden
 
 dirPathFiles="output/$typeDeconv/format_files"
 dirPathSimul="output/$typeDeconv/simulated_data"
 dirPathModel="output/$typeDeconv/trained_models"
 dirPathPred="output/$typeDeconv/predictions"
 
-for i in {1..2}
+for i in {1..10}
 do
-  scaden simulate -n $nBulk --pattern "*_counts.txt" --data $dirPathFiles --out $dirPathSimul
+  scaden simulate -n 1000 --pattern "*_counts.txt" --data $dirPathFiles --out $dirPathSimul
   
     scaden process "${dirPathSimul}/${pattern}.h5ad" "${dirPathFiles}/${pattern}_bulk_data.txt" --processed_path "${dirPathSimul}/processed.h5ad"
 
   scaden train "${dirPathSimul}/processed.h5ad" --steps 5000 --model_dir $dirPathModel
 
-  scaden predict --model_dir $dirPathModel "${dirPathFiles}/${pattern}_bulk_data.txt" --outname "predictions_${typeDeconv}_b${nBulk}_c${celltypes}_${i}"
+  scaden predict --model_dir " ${dirPathModel}" "${dirPathFiles}/${pattern}_bulk_data.txt" --outname "predictions_${typeDeconv}_${i}"
 
-  mv "predictions_${typeDeconv}_b${nBulk}_c${celltypes}_${i}" $dirPathPred
+  mv "predictions_${typeDeconv}_${i}" $dirPathPred
   
-  echo "Moved predictions_${typeDeconv}_b${nBulk}_c${celltypes}_${i} to $dirPathPred"
+  echo "Moved predictions_${typeDeconv}_${i} to $dirPathPred"
   
   emptyDir $dirPathSimul $i
   
@@ -91,521 +88,85 @@ do
 done
 ```
 
+## Deconvolution with Scaden
+
+### Only one scRNA-seq reference
+
 ```{bash}
 source functions/functions_bash.sh
 set -e
 
-typeDeconv="scaden_ctRNA" # Main folder
-pattern="scadenCtRNA" # Pattern of input files as recognized by Scaden
-celltypes="18" # Number of cell types in scRNA-seq reference
-nBulk="1000" # Size training set
+typeDeconv="scaden_plaque" # Main folder
+pattern="scaden" # Pattern of input files as recognized by Scaden
+celltypes="7" # Number of cell types in scRNA-seq reference
 
-dirPathFiles="output/$typeDeconv/format_files"
-dirPathSimul="output/$typeDeconv/simulated_data"
-dirPathModel="output/$typeDeconv/trained_models"
-dirPathPred="output/$typeDeconv/predictions"
+dirPathFiles="output/${typeDeconv}/format_files"
+dirPathSimul="output/${typeDeconv}/simulated_data"
+dirPathModel="output/${typeDeconv}/trained_models"
+dirPathPred="output/${typeDeconv}/predictions"
 
-for i in {1..2}
+# Setting both start and end to the same number will only run the loop once
+start=1
+end=10
+
+for i in $(seq $start $end)
 do
-  scaden simulate -n $nBulk --pattern "*_counts.txt" --data $dirPathFiles --out $dirPathSimul
+  scaden simulate -n 1000 --pattern "*_counts.txt" --data $dirPathFiles --out $dirPathSimul
+  
+    scaden process "${dirPathSimul}/${pattern}.h5ad" "${dirPathFiles}/${pattern}_bulk_data.txt" --processed_path "${dirPathSimul}/processed.h5ad"
+
+  scaden train "${dirPathSimul}/processed.h5ad" --steps 5000 --model_dir $dirPathModel
+
+  scaden predict --model_dir $dirPathModel "${dirPathFiles}/${pattern}_bulk_data.txt" --outname "predictions_${typeDeconv}_c${celltypes}_${i}"
+
+  mv "predictions_${typeDeconv}_c${celltypes}_${i}" $dirPathPred
+  
+  echo "Moved predictions_${typeDeconv}_c${celltypes}_${i} to ${dirPathPred}"
+  
+  emptyDir $dirPathSimul $i
+  
+  emptyDir $dirPathModel $i
 done
 ```
 
-## Plotting predictions
+### Multiple types of reference files
 
-### All patients
+```{bash}
+source functions/functions_bash.sh
+set -e
 
-Obtain average proportions:
+typeDeconv="scaden_cfRNA" # Main folder
+patternRef="scaden_cfRNA_c14_v3" # Pattern of input files as recognized by Scaden of the reference files
+patternBulk="scaden_plaque_for_cfRNA" # Pattern of bulk RNA-seq input file as recognized by Scaden
 
-```{r}
-typeDeconv = "scaden_neutrophils"
-nSimulations = seq(30)
+dirPathFiles="output/${typeDeconv}/format_files"
+dirPathCount="${dirPathFiles}/${patternRef}"
+dirPathSimul="output/${typeDeconv}/simulated_data"
+dirPathModel="output/${typeDeconv}/trained_models"
+dirPathPred="output/${typeDeconv}/predictions"
 
-for(i in nSimulations){
-  path <- paste0("output/", typeDeconv, "/predictions/predictions_", typeDeconv, "_b1500_c7_", i)
-  file <- paste0("pred", i)
+# Setting both start and end to the same number will only run the loop once
+start=2
+end=10
+
+for i in $(seq $start $end)
+do
+  scaden simulate -n 1000 --pattern "*_counts.txt" --data $dirPathCount --out $dirPathSimul
   
-  assign(file, read.delim(path,
-                          check.names = FALSE))
-  assign(file, get(file)[, order(colnames(get(file)))])
-  assign(file, `colnames<-`(get(file), c("Patient", colnames(get(file))[-1])))
+  scaden process "${dirPathSimul}/${patternRef}.h5ad" "${dirPathFiles}/${patternBulk}_bulk_data.txt" --processed_path "${dirPathSimul}/processed.h5ad"
+
+  scaden train "${dirPathSimul}/processed.h5ad" --steps 5000 --model_dir $dirPathModel
+
+  scaden predict --model_dir $dirPathModel "${dirPathFiles}/${patternBulk}_bulk_data.txt" --outname "predictions_${patternRef}_n${i}"
+
+  mv "predictions_${patternRef}_n${i}" $dirPathPred
   
-  longFile <- paste0("longPred", i)
+  echo "Moved predictions_${patternRef}_n${i} to ${dirPathPred}"
   
-  assign(longFile, get(file) %>%
-           pivot_longer(
-             cols = -Patient,
-             names_to = "Celltype",
-             values_to = "Proportion"))
-}
-
-avgProp <- as.data.frame(longPred1[1:2])
-
-for(n in nSimulations){
-  avgProp <- left_join(avgProp, 
-                       get(paste0("longPred", n)), 
-                       by = c("Patient", "Celltype"))
-}
-
-avgProp$`Average proportion` <- rowMeans(avgProp[, 3:ncol(avgProp)])
-
-avgProp <- select(avgProp, Patient, Celltype, `Average proportion`)
-
-# exportAvgProp <- pivot_wider(avgProp,
-#                              names_from = "Celltype",
-#                              values_from = "Average proportion")
-# 
-# write_excel_csv(exportAvgProp,
-#                 "output/export_files/AE_scaden_deconvolution_neutrophils_9clusters_avgprop.csv")
-
-# plaqueAvgProp <- read.csv("output/export_files/AE_scaden_deconvolution_plaque_7clusters_avgprop.csv")
-# 
-# neutrophilsAvgProp <- read.csv("output/export_files/AE_scaden_deconvolution_neutrophils_7clusters_avgprop.csv")
-```
-
-Graphs of all the predictions and average prediction:
-
-```{r}
-#All predictions
-pdf(paste0("output/", typeDeconv, "/predictions/", typeDeconv, "_predictions_graphs_all.pdf"))
-
-for(k in nSimulations){
-  longFile <- paste0("longPred", k)
-  p <- ggplot(get(longFile), aes(x = Celltype, y = Proportion)) +
-    geom_boxplot() +
-    labs(title = paste(typeDeconv, "predictions"),
-         subtitle = paste("Run:", k)) +
-    theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8)) +
-    scale_y_continuous(name = "Average cell type proportion",
-                       limits = c(0, 0.8))
-  print(p)
-}
-
-dev.off()
-
-#Average prediction
-tiff(paste0("output/figures/", typeDeconv, "_average_all.tiff"),
-     width = 720,
-     height = 720,
-     units = "px")
-
-pAvg <- ggplot(avgProp, aes(x = Celltype, y = `Average proportion`)) +
-  geom_boxplot(fill = "#98CAE1") +
-  labs(title = paste(typeDeconv, "predictions"),
-       subtitle = "All patients") +
-  scale_y_continuous(name = "Average cell type proportion",
-                           limits = c(0, 0.8)) +
-  ownMinimalTheme()
-
-print(pAvg)
-
-dev.off()
-
-```
-
-### Different patient characteristics
-
-From the cellular deconvolution done on all the patients, patients will be subsetted from the obtained predictions based on specific symptoms.
-
-```{r}
-patientData <- haven::read_sav("input/AEdata03082023.sav") 
-
-patientData$STUDY_NUMBER <- gsub("^", "ae", patientData$STUDY_NUMBER)
-
-patientData["Symptoms.2g"] <- case_when(patientData$Symptoms.4g == 0 | patientData$Symptoms.4g == 1~"mild",
-                                        patientData$Symptoms.4g == 2 | patientData$Symptoms.4g == 3~"severe")
-
-patientData["Symptoms.4g"] <- case_when(patientData$Symptoms.4g == 0~"asymptomatic",
-                                        patientData$Symptoms.4g == 1~"ocular",
-                                        patientData$Symptoms.4g == 2~"TIA",
-                                        patientData$Symptoms.4g == 3~"stroke")
-
-allPatients <- patientData %>%
-  filter(STUDY_NUMBER %in% avgProp$Patient) %>%
-  select(STUDY_NUMBER, Symptoms.4g, Symptoms.2g) %>%
-  rename(Patient = STUDY_NUMBER) %>%
-  na.omit()
-
-avgProp2g <- matchSymptomGroup(allPatients, avgProp, "Symptoms.2g", c("mild", "severe")) %>%
-  bind_rows()
-
-avgProp4g <- matchSymptomGroup(allPatients, avgProp, "Symptoms.4g", c("asymptomatic", "ocular", "TIA", "stroke")) %>%
-  bind_rows()
-
-avgProp4g$Symptoms.4g <- factor(avgProp4g$Symptoms.4g, levels = c("asymptomatic", "ocular", "TIA", "stroke"))
-
-avgPropSymp <- avgProp2g %>%
-  left_join(avgProp4g, by = c("Patient", "Celltype", "Average proportion"))
-```
-
-#### Mild versus severe symptoms
-
-```{r}
-tiff(paste0("output/figures/", typeDeconv, "_sympt2g.tiff"),
-     width = 720,
-     height = 720,
-     units = "px")
-
-pAvg2g <- ggplot(avgPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Symptoms.2g)) +
-  geom_boxplot() +
-  labs(title = paste(typeDeconv, "predictions"),
-       subtitle = "Mild versus severe symptoms",
-       fill = "Group") +
-  scale_fill_manual(values = c("#8ec3de", "#f6a582")) +
-  scale_color_manual(values = c("black", "black")) +
-  scale_y_continuous(name = "Average cell type proportion",
-                     limits = c(0, 0.8)) +
-  ownMinimalTheme()
-
-print(pAvg2g)
-
-dev.off()
-```
-
-#### Asymptomatic versus ocular versus TIA versus stroke symptoms
-
-```{r}
-tiff(paste0("output/figures/", typeDeconv, "_sympt4g.tiff"),
-     width = 720,
-     height = 720,
-     units = "px")
-
-pAvg4g <- ggplot(avgPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Symptoms.4g)) +
-  geom_boxplot() +
-  labs(title = paste(typeDeconv, "predictions"),
-       subtitle = "Asymptomatic versus ocular versus TIA versus stroke",
-       fill = "Group") +
-  scale_fill_manual(values = c("#1065ab", "#8ec3de", "#f6a582", "#b31529")) +
-  scale_color_manual(values = c("black", "black", "black","black")) +
-  scale_y_continuous(name = "Average cell type proportion",
-                           limits = c(0, 0.8)) +
-  ownMinimalTheme()
-
-print(pAvg4g)
-
-dev.off()
-```
-
-## Statistical tests
-
-```{r}
-#Data is skewed to the left.
-ggplot(avgPropSymp, aes(x = Symptoms.2g, y = `Average proportion`, fill = Symptoms.2g)) +
-  geom_boxplot() +
-  labs(x = "Group", 
-       y = "Cellular Proportions")
-
-ggplot(avgPropSymp, aes(x = `Average proportion`, fill = Symptoms.2g)) +
-  geom_histogram(binwidth = 0.1, 
-                 position = "identity", 
-                 alpha = 0.7) +
-  facet_wrap(~Symptoms.2g) +
-  labs(x = "Cellular Proportions", 
-       y = "Frequency")
-
-ggpubr::ggqqplot(avgPropSymp, x = "Average proportion") +
-  labs(x = "Theoretical Quantiles", 
-       y = "Sample Quantiles")
-```
-
-### Mild versus severe symptoms
-
-```{r}
-#Test for normality: no normal distribution.
-resShapiro <- avgPropSymp %>%
-  group_by(Symptoms.2g) %>%
-  summarise(p_value = shapiro.test(`Average proportion`)$p.value)
-
-print(resShapiro)
-
-#Test for equality of variances: variances are equal.
-resLevene <- var.test(`Average proportion` ~ Symptoms.2g, 
-                      data = avgPropSymp)
-
-print(resLevene)
-
-#Test for differences between groups: no differences with p-value = 0.6846.
-resWilcox <- wilcox.test(`Average proportion` ~ Symptoms.2g, 
-                       data = avgPropSymp)
-print(resWilcox)
-```
-
-## Plotting predictions - Gemma
-
-### All patients
-
-```{r}
-#17 patients here are not present in own predictions.
-gemmaProp <- subset(read_csv("input/Gemmaprops8clustersAE.csv"), Algorithm == "Scaden")
-
-gemmaFinalProp <- gemmaProp %>%
-  mutate(`Endothelial cell` = rowMeans(select(., `Endothelial Cells I`, `Endothelial Cells II`))) %>%
-  select(-`Endothelial Cells I`, -`Endothelial Cells II`, -Algorithm) %>%
-  select(1, order(colnames(.))) %>%
-  pivot_longer(
-    cols = -Patient,
-    names_to = "Celltype",
-    values_to = "Average proportion"
-  )
-
-tiff("output/figures/Gemma_plaque_all.tiff",
-     width = 720,
-     height = 720,
-     units = "px")
-
-pGemma <- ggplot(gemmaFinalProp, aes(x = Celltype, y = `Average proportion`)) +
-  geom_boxplot(fill = "#98CAE1") +
-  labs(title = "Gemma plaque predictions",
-       subtitle = "All patients") +
-  scale_y_continuous(name = "Average cell type proportion",
-                     limits = c(0, 0.8)) +
-  ownMinimalTheme()
-
-print(pGemma)
-
-dev.off()
-```
-
-### Different patient characteristics
-
-```{r}
-gemmaPatients <- patientData %>%
-  filter(STUDY_NUMBER %in% gemmaFinalProp$Patient) %>%
-  select(STUDY_NUMBER, Symptoms.4g, Symptoms.2g) %>%
-  rename(Patient = STUDY_NUMBER) %>%
-  na.omit()
-
-gemmaProp2g <- matchSymptomGroup(gemmaPatients, gemmaFinalProp, "Symptoms.2g", c("mild", "severe")) %>%
-  bind_rows()
-
-gemmaProp4g <- matchSymptomGroup(gemmaPatients, gemmaFinalProp, "Symptoms.4g", c("asymptomatic", "ocular", "TIA", "stroke")) %>%
-  bind_rows()
-
-gemmaProp4g$Symptoms.4g <- factor(gemmaProp4g$Symptoms.4g, levels = c("asymptomatic", "ocular", "TIA", "stroke"))
-
-gemmaPropSymp <- gemmaProp2g %>%
-  left_join(gemmaProp4g, by = c("Patient", "Celltype", "Average proportion"))
+  emptyDir $dirPathSimul $i
   
-```
-
-#### Mild versus severe
-
-```{r}
-tiff("output/figures/gemma_plaque_sympt2g.tiff",
-     width = 720,
-     height = 720,
-     units = "px")
-
-pGemma2g <- ggplot(gemmaPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Symptoms.2g)) +
-  geom_boxplot() +
-  labs(title = "Gemma plaque predictions",
-       subtitle = "Mild versus severe symptoms",
-       fill = "Group") +
-  scale_fill_manual(values = c("#8ec3de", "#f6a582")) +
-  scale_color_manual(values = c("black", "black")) +
-  scale_y_continuous(name = "Average cell type proportion",
-                     limits = c(0, 0.8)) +
-  ownMinimalTheme()
-
-print(pGemma2g)
-
-dev.off()
-```
-
-#### Asymptomatic versus ocular versus TIA versus stroke
-
-```{r}
-tiff("output/figures/gemma_plaque_sympt4g.tiff",
-     width = 720,
-     height = 720,
-     units = "px")
-
-pGemma4g <- ggplot(gemmaPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Symptoms.4g)) +
-  geom_boxplot() +
-  labs(title = "Gemma plaque predictions",
-       subtitle = "Asymptomatic versus ocular versus TIA versus stroke",
-       fill = "Group") +
-  scale_fill_manual(values = c("#1065ab", "#8ec3de", "#f6a582", "#b31529")) +
-  scale_color_manual(values = c("black", "black", "black","black")) +
-  scale_y_continuous(name = "Average cell type proportion",
-                           limits = c(0, 0.8)) +
-  ownMinimalTheme()
-
-print(pGemma4g)
-
-dev.off()
-```
-
-## Statistical tests - Gemma
-
-```{r}
-#Data is skewed to the left.
-ggplot(gemmaPropSymp, aes(x = Symptoms.2g, y = `Average proportion`, fill = Symptoms.2g)) +
-  geom_boxplot() +
-  labs(x = "Group", 
-       y = "Cellular Proportions")
-
-ggplot(gemmaPropSymp, aes(x = `Average proportion`, fill = Symptoms.2g)) +
-  geom_histogram(binwidth = 0.1, 
-                 position = "identity", 
-                 alpha = 0.7) +
-  facet_wrap(~Symptoms.2g) +
-  labs(x = "Cellular Proportions", 
-       y = "Frequency")
-
-ggpubr::ggqqplot(gemmaPropSymp, x = "Average proportion") +
-  labs(x = "Theoretical Quantiles", 
-       y = "Sample Quantiles")
-```
-
-### Mild versus severe
-
-```{r}
-#Test for normality: no normal distribution.
-resShapiroG <- gemmaPropSymp %>%
-  group_by(Symptoms.2g) %>%
-  summarise(p_value = shapiro.test(`Average proportion`)$p.value)
-
-print(resShapiroG)
-
-#Test for equality of variances: variances are equal.
-resLeveneG <- var.test(`Average proportion` ~ Symptoms.2g, 
-                      data = gemmaPropSymp)
-
-print(resLeveneG)
-
-#Test for differences between groups: no differences with p-value = 0.1683.
-resWilcoxG <- wilcox.test(`Average proportion` ~ Symptoms.2g, 
-                       data = gemmaPropSymp)
-print(resWilcoxG)
-```
-
-## Correlation plots - predictions own versus Gemma
-
-```{r}
-filterGemmaPropSymp <- filter(gemmaPropSymp, Patient %in% avgPropSymp$Patient)
-
-#Mild
-own <- filter(avgPropSymp, Symptoms.2g == "mild")
-gemma <- filter(filterGemmaPropSymp, Symptoms.2g == "mild")
-compare <- own[1:2]
-compare["ownProp"] <- own$`Average proportion`
-compare["gemmaProp"] <- gemma$`Average proportion`
-
-tiff("output/figures/cor_plaque_mild.tiff",
-     width = 720,
-     height = 720,
-     units = "px")
-
-ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
-  geom_point() +
-  geom_smooth(method = lm) +
-  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
-  labs(title = "Correlation average cellular proportions of Sympt2g_mild")
-
-dev.off()
-
-#Severe
-own <- filter(avgPropSymp, Symptoms.2g == "severe")
-gemma <- filter(filterGemmaPropSymp, Symptoms.2g == "severe")
-compare <- own[1:2]
-compare["ownProp"] <- own$`Average proportion`
-compare["gemmaProp"] <- gemma$`Average proportion`
-
-tiff("output/figures/cor_plaque_severe.tiff",
-     width = 720,
-     height = 720,
-     units = "px")
-
-ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
-  geom_point() +
-  geom_smooth(method = lm) +
-  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
-  labs(title = "Correlation average cellular proportions of Sympt2g_severe")
-
-dev.off()
-
-#Asymptomatic
-own <- filter(avgPropSymp, Symptoms.4g == "asymptomatic")
-gemma <- filter(filterGemmaPropSymp, Symptoms.4g == "asymptomatic")
-compare <- own[1:2]
-compare["ownProp"] <- own$`Average proportion`
-compare["gemmaProp"] <- gemma$`Average proportion`
-
-tiff("output/figures/cor_plaque_asymptomatic.tiff",
-     width = 720,
-     height = 720,
-     units = "px")
-
-ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
-  geom_point() +
-  geom_smooth(method = lm) +
-  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
-  labs(title = "Correlation average cellular proportions of Sympt4g_asymptomatic")
-
-dev.off()
-
-#Ocular
-own <- filter(avgPropSymp, Symptoms.4g == "ocular")
-gemma <- filter(filterGemmaPropSymp, Symptoms.4g == "ocular")
-compare <- own[1:2]
-compare["ownProp"] <- own$`Average proportion`
-compare["gemmaProp"] <- gemma$`Average proportion`
-
-tiff("output/figures/cor_plaque_ocular.tiff",
-     width = 720,
-     height = 720,
-     units = "px")
-
-ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
-  geom_point() +
-  geom_smooth(method = lm) +
-  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
-  labs(title = "Correlation average cellular proportions of Sympt4g_ocular")
-
-dev.off()
-
-#TIA
-own <- filter(avgPropSymp, Symptoms.4g == "TIA")
-gemma <- filter(filterGemmaPropSymp, Symptoms.4g == "TIA")
-compare <- own[1:2]
-compare["ownProp"] <- own$`Average proportion`
-compare["gemmaProp"] <- gemma$`Average proportion`
-
-test <- filter(own, ! (own$Patient %in% gemma$Patient))
-
-tiff("output/figures/cor_plaque_TIA.tiff",
-     width = 720,
-     height = 720,
-     units = "px")
-
-ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
-  geom_point() +
-  geom_smooth(method = lm) +
-  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
-  labs(title = "Correlation average cellular proportions of Sympt4g_TIA")
-
-dev.off()
-
-#Stroke
-own <- filter(avgPropSymp, Symptoms.4g == "stroke")
-gemma <- filter(filterGemmaPropSymp, Symptoms.4g == "stroke")
-compare <- own[1:2]
-compare["ownProp"] <- own$`Average proportion`
-compare["gemmaProp"] <- gemma$`Average proportion`
-
-tiff("output/figures/cor_plaque_stroke.tiff",
-     width = 720,
-     height = 720,
-     units = "px")
-
-ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
-  geom_point() +
-  geom_smooth(method = lm) +
-  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
-  labs(title = "Correlation average cellular proportions of Sympt4g_stroke")
-
-dev.off()
+  emptyDir $dirPathModel $i
+done
 ```
 
 ## Session info
