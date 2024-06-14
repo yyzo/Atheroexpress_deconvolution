@@ -1,0 +1,593 @@
+---
+title: "Analysis_prediction_Scaden"
+author: "Yayuan Zhu"
+date: "2024-06-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setup
+
+```{r}
+library(tidyverse)
+library(magrittr)
+
+source("functions/functions_R.R")
+```
+
+## Obtaining average proportions and corresponding graphs
+
+### Dataframe of average cell type proportion
+
+```{r}
+folder <- "scaden_cfRNA"
+basePredictionName <- "predictions_scadenCfRNA_c14_"
+nSimulations <- seq_len(15)
+
+path <- paste0("output/", folder, "/predictions/", basePredictionName)
+listLongProportions <- getLongProportions(path, nSimulations)
+avgProportions <- getAvgProportions(listLongProportions, nSimulations)
+
+# exportAvgProportions(file = avgProportions,
+#                      exportPath = "output/export_files/name.csv")
+```
+
+### Graphs of all and average predicted cell type proportions
+
+```{r}
+nCelltypes = "14"
+
+#All predictions
+namePDF = "cfRNA_scaden_c14_predictions_graphs"
+titlePlotAll = "Cellular deconvolution predictions: cfRNA"
+
+pdf(paste0("output/", folder, "/predictions/", namePDF, ".pdf"))
+
+for(n in nSimulations) {
+  longFile <- paste0("longPred", n)
+  
+  p <- ggplot(listLongProportions[[longFile]], aes(x = Celltype, y = Proportion)) +
+    geom_boxplot() +
+    labs(title = titlePlotAll,
+         subtitle = paste("Celltypes:", nCelltypes,
+                          "\nRun:", n)) +
+    theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8)) +
+    # scale_y_continuous(name = "Average cell type proportion",
+    #                    limits = c(0, 0.8))
+    scale_y_continuous(name = "Average cell type proportion")
+  
+  print(p)
+}
+
+dev.off()
+
+#Average prediction
+nameTiff = "cfRNA_scaden_c14_avg_prediction"
+titlePlotAvg = "Cellular deconvolution average prediction: cfRNA"
+
+tiff(paste0("output/figures/", nameTiff, ".tiff"),
+     width = 720,
+     height = 720,
+     units = "px")
+
+pAvg <- ggplot(avgProportions, aes(x = Celltype, y = `Average proportion`)) +
+  geom_boxplot(fill = "#98CAE1") +
+  labs(title = titlePlotAvg,
+       subtitle = paste("Celltypes:", nCelltypes,
+                        "\nTotal runs:", length(nSimulations))) +
+  scale_y_continuous(name = "Average cell type proportion",
+                           limits = c(0, 0.8)) +
+  ownMinimalTheme()
+
+print(pAvg)
+
+dev.off()
+```
+
+## Patient data
+
+To the AtheroExpress patient data, the columns containing the characteristics of interest will be altered in order to make it more readable.
+
+```{r}
+patientData <- haven::read_sav("input/AEdata03082023.sav")
+
+patientData$STUDY_NUMBER <- gsub("^", "ae", patientData$STUDY_NUMBER)
+
+# Use the code below for finding the meaning behind the numbers in the column.
+# labelled::val_labels(patientData$Gender)
+
+patientData["Symptoms.2g"] <- case_when(patientData$Symptoms.4g == 0 | patientData$Symptoms.4g == 1~"mild",
+                                        patientData$Symptoms.4g == 2 | patientData$Symptoms.4g == 3~"severe")
+
+patientData["Symptoms.4g"] <- case_when(patientData$Symptoms.4g == 0~"asymptomatic",
+                                        patientData$Symptoms.4g == 1~"ocular",
+                                        patientData$Symptoms.4g == 2~"TIA",
+                                        patientData$Symptoms.4g == 3~"stroke")
+
+patientData["Gender"] <- case_when(patientData$Gender == 0~"female",
+                                   patientData$Gender ==1~"male")
+
+save(patientData, file = "output/export_files/intermediate_R_objects/AE_patientdata_with_symptoms2g_symptoms4g_gender.rds")
+```
+
+```{r}
+load("output/export_files/intermediate_R_objects/AE_patientdata_with_symptoms2g_symptoms4g_gender.rds")
+```
+
+### Match patient data to cellular deconvolution results
+
+**Make functions where you can more easily add the symptoms to the corresponding patient!!!!**
+
+```{r}
+allPatients <- patientData %>%
+  filter(STUDY_NUMBER %in% avgProportions$Patient) %>%
+  select(STUDY_NUMBER, Symptoms.4g, Symptoms.2g, Gender) %>%
+  rename(Patient = STUDY_NUMBER) %>%
+  na.omit()
+
+avgProp2g <- matchSymptomGroup(allPatients, avgProportions, "Symptoms.2g", c("mild", "severe")) %>%
+  bind_rows()
+
+avgProp4g <- matchSymptomGroup(allPatients, avgProportions, "Symptoms.4g", c("asymptomatic", "ocular", "TIA", "stroke")) %>%
+  bind_rows()
+
+avgPropGender <- matchSymptomGroup(allPatients, avgProportions, "Gender", c("female", "male")) %>%
+  bind_rows()
+
+avgProp4g$Symptoms.4g <- factor(avgProp4g$Symptoms.4g, levels = c("asymptomatic", "ocular", "TIA", "stroke"))
+
+avgPropSymp <- avgProp2g %>%
+  left_join(avgProp4g, by = c("Patient", "Celltype", "Average proportion")) %>%
+  left_join(avgPropGender, by = c("Patient", "Celltype", "Average proportion"))
+```
+
+### Graph of average cellular deconvolution prediction based on patient characteristic
+
+#### Two characteristics - scale
+
+```{r}
+typeDeconv = "cfRNA"
+patientCharacteristic = "gender"
+# colPatientChar = Gender
+
+titlePlotAvg = "Cellular deconvolution average prediction: cfRNA"
+subtitlePlotAvg = "Male versus female"
+
+tiff(paste0("output/figures/", typeDeconv, "_",patientCharacteristic,".tiff"),
+     width = 720,
+     height = 720,
+     units = "px")
+
+pAvg2g <- ggplot(avgPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Gender)) +
+  geom_boxplot() +
+  labs(title = paste(typeDeconv, "predictions"),
+       subtitle = subtitlePlotAvg,
+       fill = "Group") +
+  scale_fill_manual(values = c("#8ec3de", "#f6a582")) +
+  scale_color_manual(values = c("black", "black")) +
+  scale_y_continuous(name = "Average cell type proportion",
+                     limits = c(0, 0.8)) +
+  ownMinimalTheme()
+
+print(pAvg2g)
+
+dev.off()
+```
+
+#### Four characteristics - scale
+
+```{r}
+tiff(paste0("output/figures/", typeDeconv, "_sympt4g.tiff"),
+     width = 720,
+     height = 720,
+     units = "px")
+
+pAvg4g <- ggplot(avgPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Symptoms.4g)) +
+  geom_boxplot() +
+  labs(title = paste(typeDeconv, "predictions"),
+       subtitle = "Asymptomatic versus ocular versus TIA versus stroke",
+       fill = "Group") +
+  scale_fill_manual(values = c("#1065ab", "#8ec3de", "#f6a582", "#b31529")) +
+  scale_color_manual(values = c("black", "black", "black","black")) +
+  scale_y_continuous(name = "Average cell type proportion",
+                           limits = c(0, 0.8)) +
+  ownMinimalTheme()
+
+print(pAvg4g)
+
+dev.off()
+```
+
+## Correlating data
+
+### Plaque versus cfRNA
+
+```{r}
+folder <- "scaden_plaque"
+basePredictionName <- "predictions_scaden_plaque_b1000_c7_"
+nSimulations <- seq_len()
+
+path <- paste0("output/", folder, "/predictions/", basePredictionName)
+listLongProportionsPlaque <- getLongProportions(path, nSimulations)
+avgProportionsPlaque <- getAvgProportions(nameList = listLongProportionsPlaque, nSimulations = seq_len(30))
+
+table(unique(avgProportions$Patient) == unique(avgProportionsPlaque$Patient))
+
+combineAvgPlaque <- avgProportionsPlaque %>%
+  mutate(Celltype = ifelse(Celltype %in% c("Macrophage", "Dendritic cell"), "Monocyte", Celltype)) %>%
+  group_by(Patient, Celltype) %>%
+  summarise(`Average proportion` = mean(`Average proportion`), .groups = 'drop')
+
+filterAvgCfRNA <- avgProportions %>%
+  subset(Celltype %in% c("B cell", "Basophil/mast cell", "Endothelial cell", "Monocyte", "Pericyte/smooth muscle cell", "T/NK cell"))
+
+celltypeMapping <- data.frame(plaqueCelltype = c("Endothelial cell", "Mast cell", "Memory B cell", "Monocyte", "Smooth muscle cell", "T/NK cell"),
+  cfRNACelltype = c("Endothelial cell", "Basophil/mast cell", "B cell", "Monocyte", "Pericyte/smooth muscle cell", "T/NK cell")
+)
+
+test <- combineAvgPlaque %>%
+  left_join(celltypeMapping, by = c("Celltype" = "plaqueCelltype"))
+
+test2 <- filterAvgCfRNA %>%
+  left_join(celltypeMapping, by = c("Celltype" = "cfRNACelltype"))
+
+merge <- test %>%
+  select(Patient, Celltype = cfRNACelltype, `Average proportion plaque` = `Average proportion`) %>%
+  inner_join(test2 %>%
+               select(Patient, Celltype, `Average proportion cfRNA` = `Average proportion`),
+             by = c("Patient", "Celltype"))
+
+tiff("output/figures/cor_plaque_cfRNA.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+ggplot(merge, aes(x = `Average proportion plaque`, y = `Average proportion cfRNA`)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
+  labs(title = "Correlation average cellular proportions of plaque and cfRNA")
+
+dev.off()
+```
+
+### Plaque mine vs Gemma
+
+```{r}
+filterGemmaPropSymp <- filter(gemmaPropSymp, Patient %in% avgPropSymp$Patient)
+
+#Mild
+own <- filter(avgPropSymp, Symptoms.2g == "mild")
+gemma <- filter(filterGemmaPropSymp, Symptoms.2g == "mild")
+compare <- own[1:2]
+compare["ownProp"] <- own$`Average proportion`
+compare["gemmaProp"] <- gemma$`Average proportion`
+
+tiff("output/figures/cor_plaque_mild.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
+  labs(title = "Correlation average cellular proportions of Sympt2g_mild")
+
+dev.off()
+
+#Severe
+own <- filter(avgPropSymp, Symptoms.2g == "severe")
+gemma <- filter(filterGemmaPropSymp, Symptoms.2g == "severe")
+compare <- own[1:2]
+compare["ownProp"] <- own$`Average proportion`
+compare["gemmaProp"] <- gemma$`Average proportion`
+
+tiff("output/figures/cor_plaque_severe.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
+  labs(title = "Correlation average cellular proportions of Sympt2g_severe")
+
+dev.off()
+
+#Asymptomatic
+own <- filter(avgPropSymp, Symptoms.4g == "asymptomatic")
+gemma <- filter(filterGemmaPropSymp, Symptoms.4g == "asymptomatic")
+compare <- own[1:2]
+compare["ownProp"] <- own$`Average proportion`
+compare["gemmaProp"] <- gemma$`Average proportion`
+
+tiff("output/figures/cor_plaque_asymptomatic.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
+  labs(title = "Correlation average cellular proportions of Sympt4g_asymptomatic")
+
+dev.off()
+
+#Ocular
+own <- filter(avgPropSymp, Symptoms.4g == "ocular")
+gemma <- filter(filterGemmaPropSymp, Symptoms.4g == "ocular")
+compare <- own[1:2]
+compare["ownProp"] <- own$`Average proportion`
+compare["gemmaProp"] <- gemma$`Average proportion`
+
+tiff("output/figures/cor_plaque_ocular.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
+  labs(title = "Correlation average cellular proportions of Sympt4g_ocular")
+
+dev.off()
+
+#TIA
+own <- filter(avgPropSymp, Symptoms.4g == "TIA")
+gemma <- filter(filterGemmaPropSymp, Symptoms.4g == "TIA")
+compare <- own[1:2]
+compare["ownProp"] <- own$`Average proportion`
+compare["gemmaProp"] <- gemma$`Average proportion`
+
+test <- filter(own, ! (own$Patient %in% gemma$Patient))
+
+tiff("output/figures/cor_plaque_TIA.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
+  labs(title = "Correlation average cellular proportions of Sympt4g_TIA")
+
+dev.off()
+
+#Stroke
+own <- filter(avgPropSymp, Symptoms.4g == "stroke")
+gemma <- filter(filterGemmaPropSymp, Symptoms.4g == "stroke")
+compare <- own[1:2]
+compare["ownProp"] <- own$`Average proportion`
+compare["gemmaProp"] <- gemma$`Average proportion`
+
+tiff("output/figures/cor_plaque_stroke.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+ggplot(compare, aes(x = ownProp, y = gemmaProp)) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  facet_wrap(~ Celltype, nrow = 3, scales = "free") +
+  labs(title = "Correlation average cellular proportions of Sympt4g_stroke")
+
+dev.off()
+```
+
+## Atherosclerotic plaque
+
+### Own predictions
+
+...
+
+### Gemma predictions
+
+```{r}
+#17 patients here are not present in own predictions.
+gemmaProp <- subset(read_csv("input/Gemmaprops8clustersAE.csv"), Algorithm == "Scaden")
+
+gemmaFinalProp <- gemmaProp %>%
+  mutate(`Endothelial cell` = rowMeans(select(., `Endothelial Cells I`, `Endothelial Cells II`))) %>%
+  select(-`Endothelial Cells I`, -`Endothelial Cells II`, -Algorithm) %>%
+  select(1, order(colnames(.))) %>%
+  pivot_longer(
+    cols = -Patient,
+    names_to = "Celltype",
+    values_to = "Average proportion"
+  )
+
+tiff("output/figures/Gemma_plaque_all.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+pGemma <- ggplot(gemmaFinalProp, aes(x = Celltype, y = `Average proportion`)) +
+  geom_boxplot(fill = "#98CAE1") +
+  labs(title = "Gemma plaque predictions",
+       subtitle = "All patients") +
+  scale_y_continuous(name = "Average cell type proportion",
+                     limits = c(0, 0.8)) +
+  ownMinimalTheme()
+
+print(pGemma)
+
+dev.off()
+```
+
+### Different patient characteristics
+
+```{r}
+gemmaPatients <- patientData %>%
+  filter(STUDY_NUMBER %in% gemmaFinalProp$Patient) %>%
+  select(STUDY_NUMBER, Symptoms.4g, Symptoms.2g) %>%
+  rename(Patient = STUDY_NUMBER) %>%
+  na.omit()
+
+gemmaProp2g <- matchSymptomGroup(gemmaPatients, gemmaFinalProp, "Symptoms.2g", c("mild", "severe")) %>%
+  bind_rows()
+
+gemmaProp4g <- matchSymptomGroup(gemmaPatients, gemmaFinalProp, "Symptoms.4g", c("asymptomatic", "ocular", "TIA", "stroke")) %>%
+  bind_rows()
+
+gemmaProp4g$Symptoms.4g <- factor(gemmaProp4g$Symptoms.4g, levels = c("asymptomatic", "ocular", "TIA", "stroke"))
+
+gemmaPropSymp <- gemmaProp2g %>%
+  left_join(gemmaProp4g, by = c("Patient", "Celltype", "Average proportion"))
+```
+
+#### Mild versus severe
+
+```{r}
+tiff("output/figures/gemma_plaque_sympt2g.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+pGemma2g <- ggplot(gemmaPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Symptoms.2g)) +
+  geom_boxplot() +
+  labs(title = "Gemma plaque predictions",
+       subtitle = "Mild versus severe symptoms",
+       fill = "Group") +
+  scale_fill_manual(values = c("#8ec3de", "#f6a582")) +
+  scale_color_manual(values = c("black", "black")) +
+  scale_y_continuous(name = "Average cell type proportion",
+                     limits = c(0, 0.8)) +
+  ownMinimalTheme()
+
+print(pGemma2g)
+
+dev.off()
+```
+
+#### Asymptomatic versus ocular versus TIA versus stroke
+
+```{r}
+tiff("output/figures/gemma_plaque_sympt4g.tiff",
+     width = 720,
+     height = 720,
+     units = "px")
+
+pGemma4g <- ggplot(gemmaPropSymp, aes(x = Celltype, y = `Average proportion`, fill = Symptoms.4g)) +
+  geom_boxplot() +
+  labs(title = "Gemma plaque predictions",
+       subtitle = "Asymptomatic versus ocular versus TIA versus stroke",
+       fill = "Group") +
+  scale_fill_manual(values = c("#1065ab", "#8ec3de", "#f6a582", "#b31529")) +
+  scale_color_manual(values = c("black", "black", "black","black")) +
+  scale_y_continuous(name = "Average cell type proportion",
+                           limits = c(0, 0.8)) +
+  ownMinimalTheme()
+
+print(pGemma4g)
+
+dev.off()
+```
+
+#### Statistical test
+
+```{r}
+#Data is skewed to the left.
+ggplot(gemmaPropSymp, aes(x = Symptoms.2g, y = `Average proportion`, fill = Symptoms.2g)) +
+  geom_boxplot() +
+  labs(x = "Group", 
+       y = "Cellular Proportions")
+
+ggplot(gemmaPropSymp, aes(x = `Average proportion`, fill = Symptoms.2g)) +
+  geom_histogram(binwidth = 0.1, 
+                 position = "identity", 
+                 alpha = 0.7) +
+  facet_wrap(~Symptoms.2g) +
+  labs(x = "Cellular Proportions", 
+       y = "Frequency")
+
+ggpubr::ggqqplot(gemmaPropSymp, x = "Average proportion") +
+  labs(x = "Theoretical Quantiles", 
+       y = "Sample Quantiles")
+
+# Mild vs severe
+#Test for normality: no normal distribution.
+resShapiroG <- gemmaPropSymp %>%
+  group_by(Symptoms.2g) %>%
+  summarise(p_value = shapiro.test(`Average proportion`)$p.value)
+
+print(resShapiroG)
+
+#Test for equality of variances: variances are equal.
+resLeveneG <- var.test(`Average proportion` ~ Symptoms.2g, 
+                      data = gemmaPropSymp)
+
+print(resLeveneG)
+
+#Test for differences between groups: no differences with p-value = 0.1683.
+resWilcoxG <- wilcox.test(`Average proportion` ~ Symptoms.2g, 
+                       data = gemmaPropSymp)
+print(resWilcoxG)
+```
+
+## Circulating RNA
+
+### Tabula Sapiens
+
+#### Bulk RNA dataset - atherosclerotic plaque
+
+```{r}
+
+```
+
+## Statistical test
+
+```{r}
+#Data is skewed to the left.
+ggplot(avgPropSymp, aes(x = Symptoms.2g, y = `Average proportion`, fill = Symptoms.2g)) +
+  geom_boxplot() +
+  labs(x = "Group", 
+       y = "Cellular Proportions")
+
+ggplot(avgPropSymp, aes(x = `Average proportion`, fill = Symptoms.2g)) +
+  geom_histogram(binwidth = 0.1, 
+                 position = "identity", 
+                 alpha = 0.7) +
+  facet_wrap(~Symptoms.2g) +
+  labs(x = "Cellular Proportions", 
+       y = "Frequency")
+
+ggpubr::ggqqplot(avgPropSymp, x = "Average proportion") +
+  labs(x = "Theoretical Quantiles", 
+       y = "Sample Quantiles")
+```
+
+### Mild versus severe symptoms
+
+```{r}
+#Test for normality: no normal distribution.
+resShapiro <- avgPropSymp %>%
+  group_by(Symptoms.2g) %>%
+  summarise(p_value = shapiro.test(`Average proportion`)$p.value)
+
+print(resShapiro)
+
+#Test for equality of variances: variances are equal.
+resLevene <- var.test(`Average proportion` ~ Symptoms.2g, 
+                      data = avgPropSymp)
+
+print(resLevene)
+
+#Test for differences between groups: no differences with p-value = 0.6846.
+resWilcox <- wilcox.test(`Average proportion` ~ Symptoms.2g, 
+                       data = avgPropSymp)
+print(resWilcox)
+```
+
+## Session info
+
+```{r}
+devtools::session_info()
+```

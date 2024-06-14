@@ -1,0 +1,413 @@
+---
+title: "Data_preprocessing_cfRNA"
+author: "Yayuan Zhu"
+date: "2024-05-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+...
+
+## Setup
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(magrittr)
+library(Seurat)
+library(stringr)
+library(scCustomize) # ADD CITATION OF THIS PACKAGE (samuel-marsh.github.io/scCustomize/articles/FAQ.html)
+
+# source("functions/functions_R.R")
+```
+
+## Description data collection
+
+| Data                              | Source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Date obtained (dd/mm/yyyy) |
+|-----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------|
+| Bulk RNA-sequencing data          | In-house                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 16/01/2024                 |
+| HGNC complete set                 | HGNC ([URL](HGNC%20https://ftp.ebi.ac.uk/pub/databases/genenames/hgnc/archive/monthly/tsv/hgnc_complete_set_2024-01-01.txt))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | 16/01/2024                 |
+| Non-coding RNA list               | HGNC, filtered on non-coding RNA ([URL](https://www.genenames.org/tools/search/#!/?query=&rows=20&start=0&filter=locus_group:%22Non-coding%20RNA%22))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | 16/01/2024                 |
+| AtheroExpress patient data        | In-house                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 15/03/2024                 |
+| AtheroExpress patient data        | In-house                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 15/03/2024                 |
+| Single-cell RNA-sequencing data   | Tabula Sapiens - All Cells ([URL](https://datasets.cellxgene.cziscience.com/b84def55-a776-4aa4-a9a6-7aab8b973086.rds))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | 01/05/2024                 |
+| Single-nuclei RNA-sequencing data | Emont MP, Jacobs C, Essene AL, Pant D, Tenen D, Colleluori G, Di Vincenzo A, Jørgensen AM, Dashti H, Stefek A, McGonagle E, Strobel S, Laber S, Agrawal S, Westcott GP, Kar A, Veregge ML, Gulko A, Srinivasan H, Kramer Z, De Filippis E, Merkel E, Ducie J, Boyd CG, Gourash W, Courcoulas A, Lin SJ, Lee BT, Morris D, Tobias A, Khera AV, Claussnitzer M, Pers TH, Giordano A, Ashenberg O, Regev A, Tsai LT, Rosen ED. A single-cell atlas of human and mouse white adipose tissue. Nature. 2022 Mar;603(7903):926-933. doi: 10.1038/s41586-022-04518-2. Epub 2022 Mar 16. Erratum in: Nature. 2023 Aug;620(7973):E14. PMID: 35296864; PMCID: PMC9504827. ([URL](https://singlecell.broadinstitute.org/single_cell/study/SCP1376/a-single-cell-atlas-of-human-and-mouse-white-adipose-tissue#study-summary)) | 21/05/2024                 |
+
+## Base scRNA-seq reference
+
+### Tabula Sapiens
+
+The original Tabula Sapiens dataset consists of 58482 genes and contains a total of 483152 cells.
+
+```{r}
+tsData <- read_rds("input/Tabula_Sapiens/Tabula_Sapiens_all_cells.rds")
+
+Idents(tsData) <- tsData@meta.data$cell_ontology_class
+
+tsData@meta.data <- tsData@meta.data %>%
+    rename(nFeature_RNA = nFeaturess_RNA, nCount_RNA = nCounts_RNA_UMIs)
+
+gc()
+
+# TRY TO SUBSET ONLY ORGANS THAT I WANT TO INCLUDE. IF I DON'T HAVE ENOUGH MEMORY FOR IT THEN EITHER MERGE SEPARATE DATASETS TOGETHER OR MAKE IT SO THE RANDOMIZATION DOESN'T PICK FROM CERTAIN ORGANS...
+
+tsMetadata <- tsData@meta.data
+```
+
+```{r}
+# tiff(paste0("output/figures/Tabula_Sapiens/TS_all_cells.tiff"),
+#      width = 1280,
+#      height = 720,
+#      unit = "px")
+# 
+# DimPlot(
+#   tsData,
+#   reduction = "umap",
+#   raster = FALSE
+# ) +
+#   theme(legend.position = "none")
+# 
+# dev.off()
+```
+
+First, the various cell types will be clustered into 14 and 18 major cell types. They may be further clustered into alternative groups depending on the results. An overview of these groups will be shown below.
+
+```{r}
+freq <- as_tibble(table(original = tsMetadata$cell_ontology_class))
+
+cellTypes <- tsMetadata %>%
+  distinct(cell_ontology_class, .keep_all = TRUE)%>%
+  select(cell_ontology_class, compartment) %>%
+  rename(original = cell_ontology_class) %>%
+  left_join(freq, by = "original")
+
+patterns <- list(
+  "Monocyte" = "(?i)dendritic|monocyte|macrophage|langerhans",
+  "Mesenchymal cell/fibroblast" = "(?i)limbal stromal|tendon|fibroblast|stellate|keratocyte|adventitial|mesenchymal",
+  "Skeletal muscle cell" = "(?i)[^hc] muscle",
+  "B cell" = "(?i)(^|\\b)b\\scell|plasma[^c]",
+  "Platelet" = "(?i)platelet",
+  "Basophil/mast cell" = "(?i)basophil|mast",
+  "Neural cell" = "(?i)ganglion|horizontal|eye|neuron|glial|schwann|muller",
+  "Neutrophil" = "(?i)neutrophil",
+  "Erythrocyte" = "(?i)erythrocyte",
+  "Cardiac muscle cell" = "(?i)cardiac muscle",
+  "Pericyte/smooth muscle cell" = "(?i)smooth|myometrial|pericyte",
+  "T/NK cell" = "(?i)(nk)|(natural)|(thymocyte)|((\\A|\\W)t cell)|(follicular)",
+  "Kidney epithelial cell" = "(?i)kidney",
+  "Enterocyte" = "(?i)^(enterocyte|mature enterocyte)",
+  "Hepatocyte" = "(?i)hepatocyte", # In Seurat Object, remove the ones from heart.
+  "Pancreatic epithelial cell" = "(?i)pancreatic (ductal|acinar)",
+  "Pneumocyte" = "(?i)pneumocyte",
+  "Endothelial cell" = function(data) as.vector(data$original[data$compartment == "endothelial"])
+)
+
+cluster <- lapply(patterns, function(pattern) {
+  if (is.function(pattern)) {
+    pattern(cellTypes)
+  } else{
+    str_subset(cellTypes$original, pattern)
+  }
+})
+
+clType <- cellTypes$original
+
+for (name in names(cluster)) {
+  clType[clType %in% unlist(cluster[[name]])] <- name
+}
+
+cellTypes$cluster18 <- factor(clType, levels = names(cluster))
+
+# Create a column with 14 cell types.
+cellTypes$cluster14 <- cellTypes$cluster18
+
+epithelialCells <- c("Kidney epithelial cell", "Enterocyte", "Hepatocyte", "Pancreatic epithelial cell", "Pneumocyte")
+
+cellTypes <- cellTypes %>%
+  mutate(cluster14 = ifelse(cluster14 %in% epithelialCells, "Epithelial cell", as.character(cluster14)))
+
+cellTypes$cluster14 <- as.factor(cellTypes$cluster14)
+```
+
+Below, the metadata file of the Seurat object will receive more columns corresponding to the clusters.
+
+```{r}
+# Rename celltypes.
+tsMetadata$cell_ontology_class <- as.character(tsMetadata$cell_ontology_class)
+
+tsMetadata$cluster18 <- tsMetadata$cell_ontology_class
+
+for (name in names(cluster)) {
+  cells <- unlist(cluster[[name]])
+
+  tsMetadata$cluster18[tsMetadata$cluster18 %in% cells] <- name
+}
+
+tsMetadata$cluster18[!(tsMetadata$cluster18 %in% names(cluster))] <- NA
+
+tsMetadata$cluster14 <- tsMetadata$cluster18
+
+tsMetadata <- tsMetadata %>%
+  mutate(cluster14 = ifelse(cluster14 %in% epithelialCells, "Epithelial cell", cluster14))
+
+tsData@meta.data <- tsMetadata
+```
+
+Randomly for each cell type take a certain amount (1000). **(Do it three times in order to see if this would affect the deconvolution, FIRST TEST WITH ONE TO SEE IF THE DECONVOLUTION WORKS !!!!!!)**
+
+```{r}
+newFreq <- as_tibble(table(cluster14 = tsMetadata$cluster14))
+
+cellsToSample <- newFreq$cluster14[newFreq$n > 1000]
+
+cellsToInclude <- tsMetadata %>%
+  subset(cluster14 == "Platelet") %>%
+  rownames()
+
+for(i in 1:3) {
+  
+  sampledCells <- c()
+  
+  for(cell in cellsToSample) {
+    rows <- tsMetadata %>%
+    subset(cluster14 == cell) %>%
+    sample_n(1000) %>%
+    rownames()
+  
+    sampledCells <- c(sampledCells, rows)
+  }
+  
+  name <- paste0("cellsToInclude", i)
+  
+  assign(name, c(cellsToInclude, sampledCells))
+  
+}
+
+for(n in 1:3) {
+  listName <- paste0("cellsToInclude", n)
+  objName <- paste0("tsCluster14", n)
+  
+  assign(objName, subset(tsData, cells = get(listName)))
+
+  obj <- get(objName)
+  Idents(obj) <- obj@meta.data$cluster14
+
+  assign(objName, obj)
+}
+```
+
+Match the genes to bulk data. The bulk data has 19124 genes, whereas the tsCluster14 dataset has 58482 genes.
+
+```{r}
+load("output/export_files/intermediate_R_objects/AE_bulk_data_654patients_filterRNA_notfinal.RData")
+
+geneKeep <- intersect(rownames(tsCluster141), bulkFilter$ensembl_gene_id) # 19182 genes.
+
+geneMap <- bulkFilter %>%
+  filter(ensembl_gene_id %in% geneKeep) %>%
+  select(ensembl_gene_id, symbol)
+
+bulkFinal <- bulkFilter %>%
+  filter(ensembl_gene_id %in% geneKeep) %>%
+  column_to_rownames("symbol") %>%
+  select(-ensembl_gene_id)
+
+for(n in 1:3) {
+  listName <- paste0("cellsToInclude", n)
+  objName <- paste0("tsCluster14", n)
+  
+  obj <- get(objName)
+  obj <- subset(obj, features = geneKeep)
+  assign(objName, obj)
+}
+
+rm(list = setdiff(ls(), c("tsCluster141", "tsCluster142", "tsCluster143", "bulkFinal", "geneMap")))
+gc()
+
+# save(tsCluster141, tsCluster142, tsCluster143, file = "output/export_files/TS_cluster14_cells13268_n1-3.RData")
+
+load("output/export_files/intermediate_R_objects/TS_cluster14_cells13268_n1-3.RData")
+```
+
+```{r}
+# tiff(paste0("output/figures/Tabula_Sapiens/TS_cluster_14.tiff"),
+#      width = 1080,
+#      height = 720,
+#      unit = "px")
+# 
+# DimPlot_scCustom(tsCluster141,
+#                  reduction = "umap",
+#                  label.box = TRUE)
+# 
+# dev.off()
+```
+
+Currently, the features in the Seurat objects are labelled as their respective Ensembl gene IDs. These will be changed to the corresponding gene symbols.
+
+```{r}
+# ----- Generate count files with gene symbols for Scaden
+map <- setNames(geneMap$symbol, geneMap$ensembl_gene_id)
+
+for(n in 1:3) {
+  objName <- paste0("tsCluster14", n)
+  obj <- get(objName)
+  
+  countsName <- paste0("tsCounts14", n)
+  counts <- obj[["RNA"]]$counts %>%
+    as.data.frame() %>%
+    t()
+
+  colnames(counts) <- map[colnames(counts)]
+  
+  assign(countsName, counts)
+}
+
+# ----- Generate celltype files for Scaden
+
+for(n in 1:3) {
+  objName <- paste0("tsCluster14", n)
+  obj <- get(objName)
+  
+  celltypesName <- paste0("tsCellTypes14", n)
+  celltypes <- Idents(obj) %>%
+    as.data.frame() %>%
+    rename(., Celltype = `.`)
+  
+  assign(celltypesName, celltypes)
+}
+
+table(rownames(tsCounts141) == rownames(tsCellTypes141))
+table(rownames(tsCounts142) == rownames(tsCellTypes142))
+table(rownames(tsCounts143) == rownames(tsCellTypes143))
+```
+
+#### Export files
+
+```{r}
+write.table(bulkFinal,
+            file = "output/scaden_cfRNA/format_files/scaden_plaque_for_cfRNA_bulk_data.txt",
+            sep = "\t")
+
+# ------------- tsCluster141
+write.table(tsCellTypes141,
+            file = "output/scaden_cfRNA/format_files/scaden_cfRNA_c14_v1/scaden_cfRNA_c14_v1_celltypes.txt",
+            sep = "\t", row.names = FALSE)
+
+write.table(tsCounts141,
+            file = "output/scaden_cfRNA/format_files/scaden_cfRNA_c14_v1/scaden_cfRNA_c14_v1_counts.txt",
+            sep = "\t", row.names = FALSE)
+
+# ------------- tsCluster142
+write.table(tsCellTypes142,
+            file = "output/scaden_cfRNA/format_files/scaden_cfRNA_c14_v2/scaden_cfRNA_c14_v2_celltypes.txt",
+            sep = "\t", row.names = FALSE)
+
+write.table(tsCounts142,
+            file = "output/scaden_cfRNA/format_files/scaden_cfRNA_c14_v2/scaden_cfRNA_c14_v2_counts.txt",
+            sep = "\t", row.names = FALSE)
+
+# ------------- tsCluster143
+write.table(tsCellTypes143,
+            file = "output/scaden_cfRNA/format_files/scaden_cfRNA_c14_v3/scaden_cfRNA_c14_v3_celltypes.txt",
+            sep = "\t", row.names = FALSE)
+
+write.table(tsCounts143,
+            file = "output/scaden_cfRNA/format_files/scaden_cfRNA_c14_v3/scaden_cfRNA_c14_v3_counts.txt",
+            sep = "\t", row.names = FALSE)
+```
+
+```{r}
+ctBulk <- read.delim("output/scaden_ctRNA/format_files/scadenCtRNA_bulk_data.txt")
+ctCounts <- read.delim("output/scaden_ctRNA/format_files/scadenCtRNA_counts.txt")
+```
+
+## Find out of which organs the scRNA references come from
+
+### Sankey diagram
+
+```{r}
+library(networkD3)
+
+source = cluster14
+target = tissue_in_publication
+
+metadata <- tsCluster141@meta.data %>%
+  select(tissue_in_publication, cluster14)
+
+tsOrgan141 <- as.data.frame(table(metadata)) %>%
+  filter(Freq >= 50)
+
+nodes <- data.frame(
+  name=c(as.character(tsOrgan141$cluster14), 
+  as.character(tsOrgan141$tissue_in_publication)) %>% unique()
+)
+
+tsOrgan141$IDsource <- match(tsOrgan141$cluster14, nodes$name)-1
+tsOrgan141$IDtarget <- match(tsOrgan141$tissue_in_publication, nodes$name)-1
+ 
+# Make the Network
+p <- sankeyNetwork(Links = tsOrgan141, Nodes = nodes,
+              Source = "IDsource", Target = "IDtarget",
+              Value = "Freq", NodeID = "name", 
+              sinksRight=FALSE)
+p
+
+library(htmlwidgets)
+saveWidget(p, file="output/figures/HTMLWidget/tsCluster141_organ_distribution.html")
+```
+
+```{r}
+metadata <- tsCluster142@meta.data %>%
+  select(tissue_in_publication, cluster14)
+
+tsOrgan142 <- as.data.frame(table(metadata)) %>%
+  filter(Freq >= 50)
+
+nodes <- data.frame(
+  name=c(as.character(tsOrgan142$cluster14), 
+  as.character(tsOrgan142$tissue_in_publication)) %>% unique()
+)
+
+tsOrgan142$IDsource <- match(tsOrgan142$cluster14, nodes$name)-1
+tsOrgan142$IDtarget <- match(tsOrgan142$tissue_in_publication, nodes$name)-1
+ 
+# Make the Network
+p <- sankeyNetwork(Links = tsOrgan142, Nodes = nodes,
+              Source = "IDsource", Target = "IDtarget",
+              Value = "Freq", NodeID = "name", 
+              sinksRight=FALSE)
+p
+
+library(htmlwidgets)
+saveWidget(p, file="output/figures/HTMLWidget/tsCluster142_organ_distribution.html")
+```
+
+```{r}
+metadata <- tsCluster143@meta.data %>%
+  select(tissue_in_publication, cluster14)
+
+tsOrgan143 <- as.data.frame(table(metadata)) %>%
+  filter(Freq >= 50)
+
+nodes <- data.frame(
+  name=c(as.character(tsOrgan143$cluster14), 
+  as.character(tsOrgan143$tissue_in_publication)) %>% unique()
+)
+
+tsOrgan143$IDsource <- match(tsOrgan143$cluster14, nodes$name)-1
+tsOrgan143$IDtarget <- match(tsOrgan143$tissue_in_publication, nodes$name)-1
+ 
+# Make the Network
+p <- sankeyNetwork(Links = tsOrgan143, Nodes = nodes,
+              Source = "IDsource", Target = "IDtarget",
+              Value = "Freq", NodeID = "name", 
+              sinksRight=FALSE)
+p
+
+library(htmlwidgets)
+saveWidget(p, file="output/figures/HTMLWidget/tsCluster143_organ_distribution.html")
+```
