@@ -1,18 +1,3 @@
-matchSymptomGroup <- function(patientData,
-                              cellProportionsData,
-                              columnSymptoms,
-                              toMatch) {
-  purrr::map(toMatch, ~ {
-    patientData %>%
-      dplyr::filter(!!rlang::sym(columnSymptoms) == .x) %>%
-      dplyr::inner_join(cellProportionsData, by = "Patient") %>%
-      dplyr::select(Patient,
-                    Celltype,
-                    `Average proportion`,
-                    !!rlang::sym(columnSymptoms))
-  })
-}
-
 ownMinimalTheme <- function() {
   theme(
     plot.title = element_text(face = "bold", size = 18),
@@ -97,3 +82,78 @@ highlightCompartmentUMAP <- function(seuratObject,
   
   return(p)
 }
+
+# ---------------------------------------------------------
+# Functions belonging to Analysis_prediction_Scaden.Rmd
+# ---------------------------------------------------------
+
+getLongProportions <- function(basePathPrediction, nSimulations = seq_len(10)) {
+  library(magrittr)
+  
+  listPred <- list()
+  listLong <- list()
+  
+  for(n in nSimulations) {
+    path <- paste0(basePathPrediction, n)
+    file <- read.delim(path, check.names = FALSE) 
+    
+    colnames(file)[1] <- "Patient"
+    file <- file[, order(colnames(file))] %>%
+      dplyr::select("Patient", everything())
+    
+    listPred[[paste0("pred", n)]] <- file
+
+    longFile <- file %>%
+      pivot_longer(cols = -Patient,
+                   names_to = "Celltype",
+                   values_to = "Proportion")
+
+    listLong[[paste0("longPred", n)]] <- longFile
+  }
+  return(c(listPred, listLong))
+}
+
+getAvgProportions <- function(nameList, nSimulations = seq_len(10)) {
+  avgProp <- as.data.frame(nameList[["longPred1"]][1:2])
+
+  for(n in nSimulations) {
+    longFile <- nameList[[paste0("longPred", n)]]
+    avgProp <- dplyr::left_join(avgProp,
+                                longFile,
+                                by = c("Patient", "Celltype"))
+  }
+
+  avgProp$`Average proportion` <- rowMeans(avgProp[, 3:ncol(avgProp)])
+  avgProp <- select(avgProp, Patient, Celltype, `Average proportion`)
+
+  return(avgProp)
+}
+
+exportAvgProportions <- function(file, 
+                                 celltypeCol = "Celltype", 
+                                 avgPropCol = "Average proportion", 
+                                 exportPath) {
+  wideFile <- dplyr::pivot_wider(file,
+                                 names_from = celltypeCol,
+                                 values_from = avgPropCol)
+  
+  readr::write_excel_csv(wideFile, exportPath)
+}
+
+matchSymptomGroup <- function(patientData,
+                              cellProportionsData,
+                              columnSymptoms,
+                              toMatch) {
+  library(magrittr)
+  
+  purrr::map(toMatch, ~ {
+    patientData %>%
+      dplyr::filter(!!rlang::sym(columnSymptoms) == .x) %>%
+      dplyr::inner_join(cellProportionsData, by = "Patient") %>%
+      dplyr::select(Patient,
+                    Celltype,
+                    `Average proportion`,
+                    !!rlang::sym(columnSymptoms))
+  })
+}
+
