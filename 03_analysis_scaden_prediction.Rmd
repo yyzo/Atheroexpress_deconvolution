@@ -23,11 +23,11 @@ source("functions/functions_R.R")
 
 [PLACEHOLDER TEXT INTRODUCTION]
 
-## Obtaining average proportions and corresponding graphs
+## Average cellular proportions
 
 ```{r}
-pattern <- "rTS_bAEplaque_c13_v1"
-nCelltypes <- "13"
+pattern <- "rTS_bAEplaque_c17_v1"
+nCelltypes <- "17"
 path <- paste0("output/scaden_predictions/", pattern, "/", pattern, "_n")
 
 # pattern <- "rAEplaque_bAEplaque_c7"
@@ -39,12 +39,27 @@ listLongProportions <- getLongProportions(path, nSimulations)
 avgProportions <- getAvgProportions(listLongProportions, nSimulations)
 ```
 
+Below, subtypes of epithelial cells can be grouped together into one major cell type "Epithelial cell". The average predicted cellular proportion equals the sum of all these subtypes.
+
+```{r}
+epithelialCells <- c("Kidney epithelial cell", "Enterocyte", "Hepatocyte", "Pancreatic epithelial cell", "Pneumocyte")
+
+sumEpithelial <- avgProportions %>%
+  filter(Celltype %in% epithelialCells) %>%
+  group_by(Patient) %>%
+  summarise(`Average proportion` = sum(`Average proportion`)) %>%
+  mutate(Celltype = "Epithelial cell")
+
+avgProportions <- avgProportions %>%
+  filter(!(Celltype %in% epithelialCells)) %>%
+  bind_rows(sumEpithelial) %>%
+  arrange(Patient, Celltype)
+```
+
 ### Graphs of all and average predicted cell type proportions
 
 ```{r}
 #All predictions
-titlePlotAll = paste0("Cellular deconvolution predictions: ", pattern)
-
 pdf(paste0("output/pdf/", pattern, "_all_graphs.pdf"))
 
 for(n in nSimulations) {
@@ -52,22 +67,20 @@ for(n in nSimulations) {
 
   p <- ggplot(listLongProportions[[longFile]], aes(x = Celltype, y = Proportion)) +
     geom_boxplot() +
-    labs(title = titlePlotAll,
+    labs(title = paste0("Cellular deconvolution predictions: ", pattern),
          subtitle = paste("Celltypes:", nCelltypes,
                           "\nRun:", n)) +
-    theme(axis.text.x = element_text(angle=60, vjust = 1, hjust = 1, size = 8)) +
-    # scale_y_continuous(name = "Average cell type proportion",
-    #                    limits = c(0, 0.8))
+    theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1, size = 8)) +
     scale_y_continuous(name = "Relative average cell type proportion")
 
   print(p)
 }
 
 dev.off()
+```
 
+```{r}
 #Average prediction
-titlePlotAvg = paste0("Cellular deconvolution average prediction: ", pattern)
-
 tiff(paste0("output/plots/average_predictions_plots/", pattern, "_avg_prediction.tiff"),
      width = 12,
      height = 12,
@@ -76,20 +89,15 @@ tiff(paste0("output/plots/average_predictions_plots/", pattern, "_avg_prediction
 
 pAvg <- ggplot(avgProportions, aes(x = reorder(Celltype, `Average proportion`), y = (`Average proportion`))) +
   geom_boxplot(fill = "lightgrey") +
-    scale_y_continuous(labels = scales::percent_format(accuracy = 1),
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1),
                      breaks = seq(0, 1, by = 0.1)) +
-  labs(title = titlePlotAvg,
+  labs(title = paste0("Cellular deconvolution average prediction: ", pattern),
        subtitle = paste("Cell types:", nCelltypes,
                         "\nTotal runs:", length(nSimulations))) +
   ylab("Relate average proportion") +
   xlab("Cell type") +
-  theme_ipsum_rc(grid="Y") +
-  theme(axis.text.x = element_text(angle=45, hjust=1),
-        axis.title.x = element_text(size=13, hjust=0.5, margin=margin(t=15)),
-        axis.title.y = element_text(size=13, hjust=0.5, margin=margin(r=15)),
-        panel.grid.minor.y = element_line(color="gray", size=0.5),
-        legend.title = element_text(size=13),
-        legend.text = element_text(size = 11))
+  theme_ipsum_rc(grid = "Y") +
+  ownTheme()
 
 print(pAvg)
 
@@ -179,6 +187,8 @@ dunnResults <- dunnTestCustom(data = avgPropCluster13_long) # 4/42 comparisons n
 
 ## Patient data
 
+### AtheroExpress
+
 To the AtheroExpress patient data, the columns containing the characteristics of interest will be altered in order to make it more readable.
 
 ```{r}
@@ -207,9 +217,9 @@ patientData["Gender"] <- case_when(patientData$Gender == 0~"female",
 load("output/export_files/intermediate_R_objects/AE_patientdata_with_symptoms2g_symptoms4g_gender.rds")
 ```
 
-### Match patient data to cellular deconvolution results
+#### Match patient data to cellular deconvolution results
 
-**Make functions where you can more easily add the symptoms to the corresponding patient!!!!**
+Make functions where you can more easily add the symptoms to the corresponding patient!!!!
 
 ```{r}
 allPatients <- patientData %>%
@@ -234,9 +244,9 @@ avgPropSymp <- avgProp2g %>%
   left_join(avgPropGender, by = c("Patient", "Celltype", "Average proportion"))
 ```
 
-### Graph of average cellular deconvolution prediction based on patient characteristic
+#### Graph of average cellular deconvolution prediction based on patient characteristic
 
-#### Two characteristics - scale
+##### Two characteristics - scale
 
 ```{r}
 typeDeconv = "cfRNA"
@@ -267,7 +277,7 @@ print(pAvg2g)
 dev.off()
 ```
 
-#### Four characteristics - scale
+##### Four characteristics - scale
 
 ```{r}
 tiff(paste0("output/figures/", typeDeconv, "_sympt4g.tiff"),
@@ -287,6 +297,42 @@ pAvg4g <- ggplot(avgPropSymp, aes(x = Celltype, y = `Average proportion`, fill =
   ownMinimalTheme()
 
 print(pAvg4g)
+
+dev.off()
+```
+
+### Pilot cfRNA bulk RNA-seq data
+
+```{r}
+bloodMetadata <- read_delim("data/metadata/cfRNA_blood_pilot_annotation.txt") %>%
+  rename("Patient" = "ID")
+
+bloodMetadata$tissue <- as.factor(bloodMetadata$tissue)
+
+avgProportions <- avgProportions %>%
+  left_join(bloodMetadata, by = "Patient")
+
+tiff("output/plots/average_predictions_plots/rTS_bAEblood_c17_v2_tissue.tiff", 
+     width = 12, 
+     height = 8, 
+     units = "in", 
+     res = 300)
+
+ggplot(avgProportions, aes(fill=tissue, x=reorder(Celltype, `Average proportion`), y=`Average proportion`)) + 
+  geom_boxplot(position=position_dodge(width=0.8), width=0.5, alpha=0.5, outlier.shape = NA) +
+  scale_fill_viridis(discrete=TRUE, name="Tissue") +
+  scale_y_percent() +
+  labs(title = "Average predicted cellular proportions: circulating RNA",
+       subtitle = "Reference: Tabula Sapiens") +
+  ylab("Relative average proportion") +
+  xlab("Celltype") +
+  theme_ipsum_rc(grid="Y") +
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        axis.title.x = element_text(size=13, hjust=0.5, margin=margin(t=15)),
+        axis.title.y = element_text(size=13, hjust=0.5, margin=margin(r=15)),
+        panel.grid.minor.y = element_line(color="gray", size=0.5),
+        legend.title = element_text(size=13),
+        legend.text = element_text(size = 11))
 
 dev.off()
 ```
@@ -400,7 +446,7 @@ for(i in (4:ncol(combineRename))) {
            subtitle = paste("Comparison: AE plaque versus Tabula Sapiens", plotNamesCellTypes[i-3])) +
     theme_ipsum_rc(grid="Y") +
     theme(axis.text.x = element_text(angle=45, hjust=1),
-            axis.title.x = element_text(size=13, hjust=0.5, margin=margin(t=15)),
+          axis.title.x = element_text(size=13, hjust=0.5, margin=margin(t=15)),
             axis.title.y = element_text(size=13, hjust=0.5, margin=margin(r=15)),
             panel.grid.minor.y = element_line(color="gray", size=0.5),
             legend.title = element_text(size=13),
@@ -449,8 +495,7 @@ ggplot(corAEplaqueTS, aes(x = AE_plaque_cell_type, y = TS_cell_type)) +
             color = "white") +
   scale_fill_distiller(palette = "RdBu",
                        limit = c(-1, 1),
-                       na.value="white",
-                       direction = 1) +
+                       na.value="white") +
   labs(title = "Correlation of average cellular proportions of AtheroExpress bulk RNA-seq data\nbetween Tabula Sapiens and AtheroExpress plaque references",
        subtitle = pattern,
        x = "AtheroExpress plaque reference",
