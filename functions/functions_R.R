@@ -213,3 +213,18 @@ ownTheme <- function() {
         legend.text = element_text(size = 11)
   )
 }
+
+patientCharBoxplot <- function(data, pattern, colChar, labels, legendName = "Patient characteristic") {
+  p <- ggplot(data, aes(x = reorder(Celltype, `Average proportion`), y = `Average proportion`, fill = as.factor(!!rlang::sym(colChar)))) +
+    geom_boxplot(position = position_dodge(width = 0.8), width = 0.5, alpha = 0.5) +
+    scale_fill_viridis(discrete = TRUE, name = legendName, labels = labels) +
+    scale_y_percent() +
+    labs(title = paste("Average predicted cellular proportions:", pattern),
+         subtitle = paste("Patient characteristics:", colChar)) +
+    ylab("Relative average proportion") +
+    xlab("Celltype") +
+    theme_ipsum_rc(grid="Y") +
+    ownTheme()
+  
+  return(p)
+}
