@@ -9,12 +9,7 @@ getLongProportions <- function(basePathPrediction, nSimulations = seq_len(10)) {
   listLong <- list()
   
   for(n in nSimulations) {
-    if(n < 10) {
-      path <- paste0(basePathPrediction, "0", n)
-    } else {
-      path <- paste0(basePathPrediction, n)
-    }
-    
+    path <- paste0(basePathPrediction, n)
     file <- read.delim(path, check.names = FALSE) 
     
     colnames(file)[1] <- "Patient"
@@ -76,134 +71,6 @@ matchSymptomGroup <- function(patientData,
                     !!rlang::sym(columnSymptoms))
   })
 }
-
-shapiroTestCustom <- function(data) {
-  celltypes <- levels(data$Celltype)
-  
-  shapiroResults <- list()
-  
-  for (celltype in celltypes) {
-    subset <- data %>%
-      dplyr::filter(Celltype == celltype)
-    
-    shapiroRes <- shapiro.test(subset$`Average proportion`)
-    
-    shapiroResults[[celltype]] <- list(
-      pValue = shapiroRes$p.value,
-      normalityPass = shapiroRes$p.value >= 0.05
-    )
-  }
-  
-  print("Can normality be assumed?")
-  
-  for (name in names(shapiroResults)) {
-    if (shapiroResults[[name]]$normalityPass == TRUE) {
-      cat(name, ": Yes (", shapiroResults[[name]]$pValue,")\n")
-    } else {
-      cat(name, ": No (", shapiroResults[[name]]$pValue,")\n")
-    }
-  }
-  
-  return(shapiroResults)
-}
-
-
-celltypesQQPlot <- function(data) {
-  celltypes <- levels(data$Celltype)
-  
-  for(celltype in celltypes) {
-    subset <- data %>%
-      dplyr::filter(Celltype == celltype)
-    
-    p <- ggpubr::ggqqplot(subset$`Average proportion`) +
-      labs(title = paste("Q-Q Plot for", celltype))
-    
-    print(p)
-  }
-}
-
-leveneTestCustom <- function(data) {
-  celltypes <- levels(data$Celltype)
-  
-  leveneResults <- list()
-  
-  for (celltype in celltypes) {
-    subset <- data %>%
-      dplyr::filter(Celltype == celltype)
-    
-    leveneRes <- car::leveneTest(`Average proportion` ~ Group, data = subset)
-    
-    leveneResults[[celltype]] <- list(
-      pValue = leveneRes[1,3],
-      equalityPass = leveneRes[1,3] >= 0.05)
-  }
-  
-  print("Are the variances between the groups homogeneous?")
-  
-  for (name in names(leveneResults)) {
-    if (leveneResults[[name]]$equalityPass == TRUE) {
-      cat(name, ": Yes (", leveneResults[[name]]$pValue,")\n")
-    } else {
-      cat(name, ": No (", leveneResults[[name]]$pValue,")\n")
-    }
-  }
-  
-  return(invisible(leveneResults))
-}
-
-kruskalTestCustom <- function(data) {
-  celltypes <- levels(data$Celltype)
-  
-  kruskalResults <- list()
-  
-  for (celltype in celltypes) {
-    subset <- data %>%
-      dplyr::filter(Celltype == celltype)
-    
-    kruskalRes <- kruskal.test(`Average proportion` ~ Group, data = subset)
-    
-    kruskalResults[[celltype]] <- list(
-      pValue = kruskalRes$p.value,
-      significancePass = kruskalRes$p.value <= 0.05)
-  }
-  
-  print("Is there a significant difference between the groups?")
-  
-  for (name in names(kruskalResults)) {
-    if (kruskalResults[[name]]$significancePass == TRUE) {
-      cat(name, ": Yes (", kruskalResults[[name]]$pValue,")\n")
-    } else {
-      cat(name, ": No (", kruskalResults[[name]]$pValue,")\n")
-    }
-  }
-  
-  return(kruskalResults)
-}
-
-dunnTestCustom <- function(data) {
-  celltypes <- levels(data$Celltype)
-  
-  dunnResults <- tibble()
-  
-  for (celltype in celltypes) {
-    subset <- data %>%
-      dplyr::filter(Celltype == celltype)
-    
-    dunnRes <- FSA::dunnTest(`Average proportion` ~ Group, data = subset, method = "bonferroni")
-    
-    dunnResults <- dunnResults %>%
-      rbind(dunnRes$res %>%
-              as_tibble() %>%
-              mutate(Celltype = celltype,
-                     Significant = ifelse(P.adj <=0.05, TRUE, FALSE)))
-    
-  }
-  
-  return(dunnResults %>%
-           select(Celltype, everything()))
-  
-}
-
 ownTheme <- function() {
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         axis.title.x = element_text(size = 13, hjust = 0.5, margin = margin(t = 15)),
@@ -214,17 +81,37 @@ ownTheme <- function() {
   )
 }
 
-patientCharBoxplot <- function(data, pattern, colChar, labels, legendName = "Patient characteristic") {
-  p <- ggplot(data, aes(x = reorder(Celltype, `Average proportion`), y = `Average proportion`, fill = as.factor(!!rlang::sym(colChar)))) +
-    geom_boxplot(position = position_dodge(width = 0.8), width = 0.5, alpha = 0.5) +
-    scale_fill_viridis(discrete = TRUE, name = legendName, labels = labels) +
-    scale_y_percent() +
-    labs(title = paste("Average predicted cellular proportions:", pattern),
-         subtitle = paste("Patient characteristics:", colChar)) +
+fillBoxplot <- function(data, pattern, col, nSimulations = seq_len(10), nCelltypes, legendName = col, labels = NULL) {
+  p <- ggplot(data, aes(x = reorder(Celltype, `Average proportion`), y = `Average proportion`)) +
+    geom_boxplot(aes(fill = as.factor(!!rlang::sym(col))), 
+                 position = position_dodge(width = 0.8), width = 0.5, alpha = 0.5) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1), breaks = seq(0, 1, by = 0.1)) +
+    labs(title = paste0("Cellular deconvolution average prediction: ", pattern),
+         subtitle = paste("Cell types:", nCelltypes,
+                          "\nTotal runs:", length(nSimulations))) +
     ylab("Relative average proportion") +
     xlab("Celltype") +
     theme_ipsum_rc(grid="Y") +
     ownTheme()
   
+  if(is.null(labels)) {
+    p <- p + scale_fill_viridis(discrete = TRUE, name = legendName)
+  } else {
+    p <- p + scale_fill_viridis(discrete = TRUE, name = legendName, labels = labels)
+  }
+  
   return(p)
+}
+
+sympFilter <- function(sympData, toFilter) {
+  listSympDataFiltered <- list()
+  
+  for(col in toFilter) {
+    sympDataFiltered <- sympData %>%
+      filter(!is.na(!!rlang::sym(col)) & !!rlang::sym(col) != -888 & !!rlang::sym(col) != -999) %>%
+      select(Patient, Celltype, `Average proportion`, !!rlang::sym(col))
+    
+    listSympDataFiltered[[col]] <- sympDataFiltered
+  }
+  return(listSympDataFiltered)
 }
