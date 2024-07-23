@@ -1,7 +1,10 @@
 # ---------------------------------------------------------
-# Functions belonging to Analysis_prediction_Scaden.Rmd
+# Functions belonging to 03_analysis_scaden_prediction.Rmd
 # ---------------------------------------------------------
 
+# --------------------
+# Data manipulation
+# --------------------
 getLongProportions <- function(basePathPrediction, nSimulations = seq_len(10)) {
   library(magrittr)
   
@@ -55,6 +58,19 @@ exportAvgProportions <- function(file,
   readr::write_excel_csv(wideFile, exportPath)
 }
 
+sympFilter <- function(sympData, toFilter) {
+  listSympDataFiltered <- list()
+  
+  for(col in toFilter) {
+    sympDataFiltered <- sympData %>%
+      filter(!is.na(!!rlang::sym(col)) & !!rlang::sym(col) != -888 & !!rlang::sym(col) != -999) %>%
+      select(Patient, Celltype, `Average proportion`, !!rlang::sym(col))
+    
+    listSympDataFiltered[[col]] <- sympDataFiltered
+  }
+  return(listSympDataFiltered)
+}
+
 matchSymptomGroup <- function(patientData,
                               cellProportionsData,
                               columnSymptoms,
@@ -71,6 +87,11 @@ matchSymptomGroup <- function(patientData,
                     !!rlang::sym(columnSymptoms))
   })
 }
+
+# --------------------
+# Figures
+# --------------------
+
 ownTheme <- function() {
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         axis.title.x = element_text(size = 13, hjust = 0.5, margin = margin(t = 15)),
@@ -103,15 +124,25 @@ fillBoxplot <- function(data, pattern, col, nSimulations = seq_len(10), nCelltyp
   return(p)
 }
 
-sympFilter <- function(sympData, toFilter) {
-  listSympDataFiltered <- list()
+# Removed theme_ipsum_rc() as this caused plots to not be rendered correctly when exporting to PDF.
+fillBoxplotPDF <- function(data, pattern, col, nSimulations = seq_len(10), nCelltypes, legendName = col, labels = NULL) {
+  p <- ggplot(data, aes(x = reorder(Celltype, `Average proportion`), y = `Average proportion`)) +
+    geom_boxplot(aes(fill = as.factor(!!rlang::sym(col))), 
+                 position = position_dodge(width = 0.8), width = 0.5, alpha = 0.5) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1), breaks = seq(0, 1, by = 0.1)) +
+    labs(title = paste0("Cellular deconvolution average prediction: ", pattern),
+         subtitle = paste("Cell types:", nCelltypes,
+                          "\nTotal runs:", length(nSimulations))) +
+    ylab("Relative average proportion") +
+    xlab("Celltype") +
+    theme_classic() +
+    ownTheme()
   
-  for(col in toFilter) {
-    sympDataFiltered <- sympData %>%
-      filter(!is.na(!!rlang::sym(col)) & !!rlang::sym(col) != -888 & !!rlang::sym(col) != -999) %>%
-      select(Patient, Celltype, `Average proportion`, !!rlang::sym(col))
-    
-    listSympDataFiltered[[col]] <- sympDataFiltered
+  if(is.null(labels)) {
+    p <- p + scale_fill_viridis(discrete = TRUE, name = legendName)
+  } else {
+    p <- p + scale_fill_viridis(discrete = TRUE, name = legendName, labels = labels)
   }
-  return(listSympDataFiltered)
+  
+  return(p)
 }

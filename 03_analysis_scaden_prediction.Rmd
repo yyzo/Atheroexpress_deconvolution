@@ -24,7 +24,6 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(magrittr)
 library(reshape2)
-library(rlang)
 
 # Libraries for plots
 library(hrbrthemes)
@@ -47,8 +46,8 @@ source("functions/functions_R.R")
 ## 3.3.1 Base dataframe of average cellular proportions
 
 ```{r}
-basePattern <- "rTS_bAEplaque_c17_v"
-nRandomization <- seq_len(1)
+basePattern <- "rTS_bAEblood1_c17_v"
+nRandomization <- 3
 nSimulations <- seq_len(10)
 
 if(length(nRandomization) == 1) {
@@ -181,7 +180,15 @@ resLevene <- avgPropSymp %>%
 ## 3.5.2 Differences between patient groups within each cell type
 
 ```{r}
-charStats <- c("Symptoms.2g", "Symptoms.4g", "Gender", "Macrophages.bin", "SMC.bin", "thrombus.bin", "Collagen.bin", "IPH.bin", "cluster", "smc_macrophages_ratio", "plaquephenotype")
+charStats <- c("Symptoms.2g", "Symptoms.4g", "Gender", "Macrophages.bin", "SMC.bin", "IPH.bin", "smc_macrophages_ratio", "plaquephenotype")
+
+orderedCelltypes <- avgPropSymp %>%
+  group_by(Celltype) %>%
+  summarise(`Average proportion` = mean(`Average proportion`)) %>%
+  arrange(`Average proportion`) %>%
+  pull(Celltype)
+
+avgPropSymp$Celltype <- factor(avgPropSymp$Celltype, levels = orderedCelltypes)
 
 filteredSympStats <- sympFilter(avgPropSymp, charStats)
 
@@ -202,22 +209,17 @@ for(symp in names(filteredSympStats)) {
     
     resDunn <- df %>%
       group_by(Celltype) %>%
-      dunn_test(formula = formula) %>%
+      dunn_test(formula = formula, p.adjust.method = "none") %>%
       add_significance("p") %>%
-      adjust_pvalue(method = "bonferroni") %>%
-      add_significance("p.adj") %>% 
       add_xy_position(x = "Celltype")
     
     resDunnList[[symp]] <- resDunn
-    
   } else {
     res <- df %>%
       group_by(Celltype) %>%
       wilcox_test(formula = formula) %>% 
-      add_xy_position(x = "Celltype") %>%
       add_significance("p") %>%
-      adjust_pvalue(method = "bonferroni") %>%
-      add_significance("p.adj")
+      add_xy_position(x = "Celltype")
   }
   resStats[[symp]] <- res
 }
@@ -230,14 +232,14 @@ for(symp in names(filteredSympStats)) {
 ## 3.6.1 All cellular proportions
 
 ```{r}
-pattern <- "rTS_bAEplaque_c13_v3"
-nCelltypes <- "13"
+pattern <- "rTS_bAEblood1_c17_v3"
+nCelltypes <- "17"
 nSimulations <- seq_len(10)
 
 pdf(paste0("output/pdf/", pattern, "_all_graphs.pdf"))
 
 for(n in nSimulations) {
-  p <- ggplot(listLongProportions3[[paste0("longPred", n)]], aes(x = Celltype, y = Proportion)) +
+  p <- ggplot(listLongProportions[[paste0("longPred", n)]], aes(x = Celltype, y = Proportion)) +
     geom_boxplot(fill = "lightgrey") +
     scale_y_continuous(labels = scales::percent_format(accuracy = 1),
                        breaks = seq(0, 1, by = 0.1)) +
@@ -259,8 +261,8 @@ dev.off()
 ### 3.6.2.1 One version
 
 ```{r}
-pattern <- "rTS_bAEplaque_c13_v3"
-nCelltypes <- "13"
+pattern <- "rTS_bAEblood1_c17_v3"
+nCelltypes <- "17"
 nSimulations <- seq_len(10)
 
 pAvg <- ggplot(avgProportions, aes(x = reorder(Celltype, `Average proportion`), y = (`Average proportion`))) +
@@ -292,7 +294,7 @@ bloodMetadata <- read_delim("data/metadata/cfRNA_blood_pilot_annotation.txt") %>
 
 bloodMetadata$tissue <- as.factor(bloodMetadata$tissue)
 
-avgProportions <- avgProportions %>%
+avgProportions %<>%
   left_join(bloodMetadata, by = "Patient")
 ```
 
@@ -318,8 +320,8 @@ dev.off()
 ### 3.6.2.3 AtheroExpress patient characteristics
 
 ```{r}
-pattern <- "rTS_bAEplaque_c7_v1"
-nCelltypes <- "7"
+pattern <- "rTS_bAEblood1_c17_v3"
+nCelltypes <- "17"
 
 listChar <- list(
   list(col = "Symptoms.2g", labels = c("mild", "severe")),
@@ -327,10 +329,7 @@ listChar <- list(
   list(col = "Gender", labels = c("female", "male")),
   list(col = "Macrophages.bin", labels = c("no/minor", "moderate/heavy")),
   list(col = "SMC.bin", labels = c("no/minor", "moderate/heavy")),
-  list(col = "thrombus.bin", labels = c("no/minor", "moderate/heavy")),
-  list(col = "Collagen.bin", labels = c("no/minor", "moderate/heavy")),
   list(col = "IPH.bin", labels = c("no", "yes")),
-  list(col = "cluster", labels = c("0", "1", "2", "3", "4")),
   list(col = "smc_macrophages_ratio", labels = c("smc dominant", "equal", "macrophages dominant")),
   list(col = "plaquephenotype", labels = c("fibrous", "fibroatheromatous", "atheromatous"))
 )
@@ -340,6 +339,7 @@ toFilter <- sapply(listChar, function(x) x$col)
 filteredSympData <- sympFilter(avgPropSymp, toFilter)
 
 plotList <- list()
+plotListPDF <- list()
 
 for(char in listChar) {
   col <- char$col
@@ -351,24 +351,40 @@ for(char in listChar) {
                        nCelltypes = nCelltypes,
                        labels = labels)
   
+  pPDF <- fillBoxplotPDF(data = filteredSympData[[col]],
+                         pattern = pattern,
+                         col = col,
+                         nCelltypes = nCelltypes,
+                         labels = labels)
+  
   plotList[[col]] = pChar
+  plotListPDF[[col]] = pPDF
 }
 ```
 
 ```{r}
+# Exporting plots without significance bars
 for(name in names(plotList)) {
-  tiff(paste0("output/plots/average_predictions_plots/patient_symptoms/", pattern, "_", name, ".tiff"),
+  tiff(paste0("output/plots/average_predictions_plots/patient_symptoms/no_significance_sign/", pattern, "_", name, ".tiff"),
        width = 12, height = 8, units = "in", res = 300)
   
   print(plotList[[name]])
   
   dev.off()
 }
+
+pdf(paste0("output/pdf/", pattern, "_patient_symptoms.pdf"))
+
+for(name in names(plotListPDF)) {
+  print(plotListPDF[[name]])
+}
+
+dev.off()
 ```
 
 ```{r}
 signPlotList <- list()
-signAdjPlotList <- list()
+signPlotListPDF <- list()
 
 for(symp in names(resStats)) {
   if(symp %in% names(resDunnList)) {
@@ -378,29 +394,38 @@ for(symp in names(resStats)) {
   }
   
   pAdd <- plotList[[symp]]
+  pAddPDF <- plotListPDF[[symp]]
     
   pSign <- pAdd +
     stat_pvalue_manual(df, label = "p.signif", hide.ns = TRUE, tip.length = 0.5)
-    
-  pSignAdj <- pAdd +
-    stat_pvalue_manual(df, label = "p.adj.signif", hide.ns = TRUE, tip.length = 0.5)
-  
+  pSignPDF <- pAddPDF +
+    stat_pvalue_manual(df, label = "p.signif", hide.ns = TRUE, tip.length = 0.5)
+
   signPlotList[[symp]] <- pSign
-  signAdjPlotList[[symp]] <- pSignAdj
+  signPlotListPDF[[symp]] <- pSignPDF
 }
 ```
 
 ```{r}
-pattern <- "rTS_bAEplaque_c7_v1"
+# Exporting plots with significance bars
+pattern <- "rTS_bAEblood1_c17_v3"
 
 for(name in names(signPlotList)) {
-  tiff(paste0("output/plots/average_predictions_plots/patient_symptoms/significance/", pattern, "_", name, "_not_adj.tiff"),
+  tiff(paste0("output/plots/average_predictions_plots/patient_symptoms/significance_sign/", pattern, "_", name, "_not_adj.tiff"),
        width = 12, height = 8, units = "in", res = 300)
   
   print(signPlotList[[name]])
   
   dev.off()
 }
+
+pdf(paste0("output/pdf/", pattern, "_patient_symptoms_sign.pdf"))
+
+for(name in names(signPlotListPDF)) {
+  print(signPlotListPDF[[name]])
+}
+
+dev.off()
 ```
 
 ## 3.6.3 Correlation
@@ -501,7 +526,7 @@ for(i in (4:ncol(combine))) {
 ### 3.6.3.3 Heat map
 
 ```{r}
-pattern <- "rTS_bAEplaque_c17_v1"
+pattern <- "rTS_bAEplaque_c10_v1"
 
 tiff(paste0("output/plots/correlation_plots/", pattern, "_heatmap.tiff"),
      width = 12,

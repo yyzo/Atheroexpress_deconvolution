@@ -9,37 +9,60 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# 1.1 Introduction
+
+------------------------------------------------------------------------
+
+...
+
+# 1.2 Libraries
+
+------------------------------------------------------------------------
+
 ```{r setup}
-# When writing the text, add references for these packages.
+# Libraries for data manipulation
 library(tidyverse)
 library(magrittr)
+library(reshape2)
+
+# Library for working with Seurat Objects
 library(Seurat)
-library(stringr)
+
+# Library for bulk RNA-sequencing data preprocessing
+library(edgeR)
+
+# Library for scRNA-seq-related plots
 library(scCustomize)
 
+# Own functions
 source("functions/functions_R.R")
+
+# When writing the text, add references for these packages.
 ```
 
-[PLACEHOLDER TEXT INTRODUCTION]
-
-## Tabula sapiens
-
-The original Tabula Sapiens dataset consists of 58482 genes and contains a total of 483152 cells.
+# 1.3 Tabula Sapiens
 
 ```{r}
 tsData <- read_rds("data/raw_data/Tabula_Sapiens_all_cells.rds")
 
 Idents(tsData) <- tsData@meta.data$cell_ontology_class
 
-tsData@meta.data <- tsData@meta.data %>%
-  rename(nFeature_RNA = nFeaturess_RNA, nCount_RNA = nCounts_RNA_UMIs)
+# Only retain major contributing organs
+organsToInclude <- c("Blood", "Liver", "Lymph_Node", "Fat", "Bone_Marrow", "Heart", "Muscle", "Pancreas", "Large_Intestine", "Lung", "Small_Intestine", "Vasculature", "Kidney")
 
-tsMetadata <- tsData@meta.data
+tsMetadata <- tsData@meta.data %>%
+  rename(nFeature_RNA = nFeaturess_RNA, nCount_RNA = nCounts_RNA_UMIs) %>%
+  filter(tissue_in_publication %in% organsToInclude &
+           !(tissue_in_publication == "Heart" & cell_ontology_class == "hepatocyte") &
+           !(cell_ontology_class == "endothelial cell" & ! (tissue_in_publication %in% c("Vasculature", "Fat")))
+         )
+
+tsMetadata$cell_ontology_class <- as.character(tsMetadata$cell_ontology_class)
 
 gc()
 ```
 
-### Grouping into major cell types
+## 1.3.1 Grouping into major cell types
 
 ```{r}
 freq <- as_tibble(table(original = tsMetadata$cell_ontology_class))
@@ -50,207 +73,299 @@ tsCelltypes <- tsMetadata %>%
   rename(original = cell_ontology_class) %>%
   left_join(freq, by = "original")
 
-# CHECK FOR MESENCHYMAL CELL/FIBROBLAST IF THE PATTERN IS RIGHT
 celltypePatterns <- list(
-  # "Monocyte" = "(?i)dendritic|monocyte|macrophage|langerhans",
-  "Macrophage" = "(?i)monocyte|macrophage",
-  "Dendritic cell" = "(?i)dendritic|langerhans",
-  # "Mesenchymal cell/fibroblast" = "(?i)limbal|  stromal|tendon|fibroblast|stellate|keratocyte|adventitial|mesenchymal",
-  # "Skeletal muscle cell" = "(?i)[^hc] muscle",
+  "Monocyte" = "(?i)dendritic|monocyte|macrophage|langerhans",
+  "Mesenchymal cell/fibroblast" = "(?i)fibroblast|stellate|adventitial|mesenchymal",
+  "Skeletal muscle cell" = "(?i)[^hc] muscle",
   "B cell" = "(?i)(^|\\b)b\\scell|plasma[^c]",
-  # "Platelet" = "(?i)platelet",
+  "Platelet" = "(?i)platelet",
   "Basophil/mast cell" = "(?i)basophil|mast",
-  # "Neutrophil" = "(?i)neutrophil",
-  # "Erythrocyte" = "(?i)erythrocyte",
-  # "Cardiac muscle cell" = "(?i)cardiac muscle",
+  "Neutrophil" = "(?i)neutrophil",
+  "Erythrocyte" = "(?i)erythrocyte",
+  "Cardiac muscle cell" = "(?i)cardiac muscle",
   "Pericyte/smooth muscle cell" = "(?i)smooth|myometrial|pericyte",
   "T/NK cell" = "(?i)(nk)|(natural)|((\\A|\\W)t cell)",
-  # "Kidney epithelial cell" = "(?i)kidney",
-  # "Enterocyte" = "(?i)^(enterocyte|mature enterocyte)",
-  # "Hepatocyte" = "(?i)hepatocyte", # In Seurat Object, remove the ones from heart.
-  # "Pancreatic epithelial cell" = "(?i)pancreatic (ductal|acinar)",
-  # "Pneumocyte" = "(?i)pneumocyte",
-  # "Endothelial cell" = function(data) as.vector(data$original[data$compartment == "endothelial"])
-  "Endothelial cell" = "(?i)[^(ic)][cyn]\\sendothelial cell|artery|tree|vein"
+  "Kidney epithelial cell" = "(?i)kidney",
+  "Enterocyte" = "(?i)^(enterocyte|mature enterocyte)",
+  "Hepatocyte" = "(?i)hepatocyte",
+  "Pancreatic epithelial cell" = "(?i)pancreatic (ductal|acinar)",
+  "Pneumocyte" = "(?i)pneumocyte",
+  "Endothelial cell" = "(?i)^endothelial cell\\Z|endothelial cell of [^h]|lymphatic|vein endo|artery endo|cardiac endo|capillary endo"
 )
 
-# CHANGE THIS PART TO SOMETHING THAT I UNDERSTAND
 cluster <- lapply(celltypePatterns, function(pattern) {
-  if (is.function(pattern)) {
-    pattern(tsCelltypes)
-  } else{
-    str_subset(tsCelltypes$original, pattern)
-  }
+  str_subset(tsCelltypes$original, pattern)
 })
 
-replaceCelltype <- tsCelltypes$original
+# 17 major cell types
+tsCelltypes$cluster17 <- tsCelltypes$original
 
-for (name in names(cluster)) {
-  replaceCelltype[replaceCelltype %in% unlist(cluster[[name]])] <- name
+for(name in names(cluster)) {
+  tsCelltypes$cluster17[tsCelltypes$cluster17 %in% cluster[[name]]] <- name
 }
 
-tsCelltypes$cluster7 <- factor(replaceCelltype, levels = names(cluster))
+tsCelltypes$cluster17[!(tsCelltypes$cluster17 %in% names(cluster))] <- NA
 
-# tsCelltypes$cluster13 <- tsCelltypes$cluster17
-# 
-# epithelialCells <- c("Kidney epithelial cell", "Enterocyte", "Hepatocyte", "Pancreatic epithelial cell", "Pneumocyte")
-# 
-# tsCelltypes <- tsCelltypes %>%
-#   mutate(cluster13 = ifelse(cluster13 %in% epithelialCells, "Epithelial cell", as.character(cluster13)))
-# 
-# tsCelltypes$cluster13 <- as.factor(tsCelltypes$cluster13)
+# 13 and 10  major cell types
+epithelialCells <- c("Kidney epithelial cell", "Enterocyte", "Hepatocyte", "Pancreatic epithelial cell", "Pneumocyte")
+
+plaqueCells <- c("Monocyte", "Mesenchymal cell/fibroblast", "B cell", "Platelet", "Basophil/mast cell", "Neutrophil", "Erythrocyte", "Pericyte/smooth muscle cell", "T/NK cell", "Endothelial cell")
+
+tsCelltypes %<>%
+  mutate(cluster13 = ifelse(cluster17 %in% epithelialCells, "Epithelial cell", cluster17)) %>%
+  mutate(cluster10 = ifelse(!(cluster13 %in% plaqueCells), NA, cluster13))
 ```
 
-Below, the metadata file of the Seurat object will be adapted to include the major cell types.
+Below, the metadata file of the Seurat object will be adapted to include the different groupings of the major cell types.
 
 ```{r}
-# Rename celltypes.
-tsMetadata$cell_ontology_class <- as.character(tsMetadata$cell_ontology_class)
+tsMetadata$cluster17 <- tsMetadata$cell_ontology_class
 
-tsMetadata$cluster7 <- tsMetadata$cell_ontology_class
-
-for (name in names(cluster)) {
-  cells <- unlist(cluster[[name]])
-
-  tsMetadata$cluster7[tsMetadata$cluster7 %in% cells] <- name
+for(name in names(cluster)) {
+  tsMetadata$cluster17[tsMetadata$cluster17 %in% cluster[[name]]] <- name
 }
 
-tsMetadata$cluster7[!(tsMetadata$cluster7 %in% names(cluster))] <- NA
+tsMetadata$cluster17[!(tsMetadata$cluster17 %in% names(cluster))] <- NA
 
-# tsMetadata$cluster13 <- tsMetadata$cluster17
-# 
-# tsMetadata <- tsMetadata %>%
-#   mutate(cluster13 = ifelse(cluster13 %in% epithelialCells, "Epithelial cell", cluster13))
+tsMetadata %<>%
+  mutate(cluster13 = ifelse(cluster17 %in% epithelialCells, "Epithelial cell", cluster17)) %>%
+  mutate(cluster10 = ifelse(!(cluster13 %in% plaqueCells), NA, cluster13)) %>%
+  mutate_at(c("cluster17", "cluster13", "cluster10"), factor)
 
 tsData@meta.data <- tsMetadata
-
-# Remove certain organs from the metadata file.
-organsToInclude <- c("Blood", "Liver", "Lymph_Node", "Fat", "Skin", "Bone_Marrow", "Heart", "Muscle", "Pancreas", "Muscle", "Thymus", "Large_Intestine", "Lung", "Small_Intestine", "Vasculature", "Kidney")
-
-tsMetadataFilter <- tsMetadata %>%
-  filter(tissue_in_publication %in% organsToInclude)
-
-# %>%
-#   filter(!(tissue_in_publication == "Heart" & cluster17 == "Hepatocyte"))
 ```
 
-### Subset Tabula Sapiens into smaller Seurat objects
+## 1.3.2 Subsetting Tabula Sapiens into smaller Seurat objects
 
 As processing the original Tabula Sapiens Seurat object is too memory-heavy, cells with a larger cell type frequency than 1000 will be selected at random to be put into a new Seurat object.
 
 ```{r}
-nCelltypes <- "7"
+colCluster <- "cluster13" # Column of the cell type grouping of interest
+nSeurat <- seq_len(1) # Number of seurat objects to subset
 
-newFreq <- as_tibble(table(cluster7 = tsMetadataFilter$cluster7))
+newFreq <- as_tibble(table(Celltype = tsMetadata[[colCluster]]))
 
-cellsToSample <- newFreq$cluster7[newFreq$n > 1000]
+cellsToSample <- newFreq$Celltype[newFreq$n > 1000]
 
-cellsToInclude <- tsMetadataFilter %>%
-  subset(cluster7 == "Dendritic cell") %>%
+cellsBelow <- tsMetadata %>%
+  subset(.[[colCluster]] %in% setdiff(newFreq$Celltype, cellsToSample)) %>%
   rownames()
 
-# cellsToInclude <- tsMetadataFilter %>%
-#   subset(cluster7 == "Platelet") %>%
-#   rownames()
-
-for(i in 1:1) {
+for(n in nSeurat) {
   sampledCells <- c()
   
   for (cell in cellsToSample) {
-    rows <- tsMetadataFilter %>%
-      subset(cluster7 == cell) %>%
+    rows <- tsMetadata %>%
+      subset(.[[colCluster]] == cell) %>%
       sample_n(1000) %>%
       rownames()
     
     sampledCells <- c(sampledCells, rows)
   }
+  name <- paste0("cellsToInclude", n)
   
-  name <- paste0("cellsToInclude", i)
-  
-  assign(name, c(cellsToInclude, sampledCells))
-  
+  assign(name, c(cellsBelow, sampledCells))
 }
 
-for(n in 1:1) {
-  listName <- paste0("cellsToInclude", n)
-  objName <- paste0("tsCluster", nCelltypes, n)
+for(n in nSeurat) {
+  list <- get(paste0("cellsToInclude", n))
+  objName <- paste0("tsCluster", gsub("cluster", "", colCluster), n)
   
-  assign(objName, subset(tsData, cells = get(listName)))
-
-  obj <- get(objName)
-  Idents(obj) <- obj@meta.data$cluster7
+  obj <- subset(tsData, cells = list)
+  Idents(obj) <- obj@meta.data[[colCluster]]
 
   assign(objName, obj)
 }
+
+rm(obj, tsData)
 ```
 
-### Match to bulk RNA-seq data
+# 1.4 Preprocess bulk RNA-seq data
 
-#### Atherosclerotic plaque
+------------------------------------------------------------------------
 
-The bulk RNA-seq of the atherosclerotic plaques of the AtheroExpress cohort has 19124 genes.
-
-#### Circulating cell-free RNA
+##  1.4.1 In-house bulk RNA-seq datasets
 
 ```{r}
-# load("data/raw_data/cfRNA_blood_pilot.RData")
-# 
-# completeHGNC <- read_delim("input/hgnc_complete_set.txt")
-# ncRNA <- read_delim("input/HGNC_NonCodingRNA.txt")
-# 
-# annotation <- read_delim(file = "input/Data_cfRNA_plasma_blood/rawCounts_combined_annotation.txt")
-# 
-# bulkBlood <- rawCounts_combined %>% 
-#   rownames_to_column("ensembl_gene_id") %>%
-#   filter(ensembl_gene_id %in% completeHGNC$ensembl_gene_id) %>%
-#   left_join(select(completeHGNC, ensembl_gene_id, symbol), by = "ensembl_gene_id") %>%
-#   select(ensembl_gene_id, symbol, everything()) %>%
-#   filter(!(symbol %in% ncRNA$Symbol))
-# 
-# save(bulkBlood, file = "data/processed_data/export_files/intermediate_R_objects/pilot_blood_bulk_data_HGNC.RData")
+completeHGNC <- read_delim("data/raw_data/hgnc_complete_set.txt")
+ncRNA <- read_delim("data/raw_data/HGNC_NonCodingRNA.txt")
+
+# aeBulk1 <- read.delim("data/raw_data/MM_MOK9065_combined_raw_counts.txt")
+# colnames(aeBulk1) <- gsub("AE", "ae", colnames(aeBulk1))
+
+aeBulk2 <- read.delim("data/raw_data/cfRNA_24042024_combined_raw_counts.txt")
+colnames(aeBulk2) <- gsub("AE", "ae", colnames(aeBulk2))
+colnames(aeBulk2) <- gsub(".sam.counts", "", colnames(aeBulk2))
+
+# acsBulk <- read.delim("data/raw_data/U_MOK10062_combined_raw_counts.txt")
+# colnames(acsBulk) <- gsub(".sam.counts", "", colnames(acsBulk))
+```
+
+## 1.4.1 Filter counts bulk RNA-seq data
+
+```{r}
+aeBulk <- aeBulk2
+
+aeBulkFilter <- aeBulk %>%
+  filter(gene %in% completeHGNC$ensembl_gene_id) %>%
+  rename("ensembl_gene_id" = "gene") %>%
+  left_join(select(completeHGNC, ensembl_gene_id, symbol), by = "ensembl_gene_id") %>%
+  select(ensembl_gene_id, symbol, everything()) %>%
+  filter(!(symbol %in% ncRNA$Symbol))
+
+dgeAE <- DGEList(counts = aeBulkFilter)
+cpmAE <- cpm(dgeAE)
+
+toKeepGenes <- rowSums(cpmAE > 1) >= 15 # The genes need to be expressed in at least 15 patients.
+toKeepPatients <- colSums(cpmAE > 1) >= 10000 # The patients need to have at least 8000 total counts.
+
+dgeAEFilter <- dgeAE[toKeepGenes, toKeepPatients, keep.lib.sizes = FALSE]
 ```
 
 ```{r}
-load("data/processed_data/export_files/intermediate_R_objects/AE_bulk_data_654patients_filterRNA_notfinal.RData")
+aeBulkQC <- as.data.frame(dgeAEFilter$genes) %>%
+  bind_cols(as.data.frame(dgeAEFilter$counts))
 
-# load("data/processed_data/export_files/intermediate_R_objects/pilot_blood_bulk_data_HGNC.RData")
+rownames(aeBulkQC) <- NULL
 
-geneKeep <- intersect(rownames(tsCluster71), bulkFilter$ensembl_gene_id) # 32397 genes.
+save(aeBulkQC, file = "data/processed_data/export_files/intermediate_R_objects/AE_bulk_blood_batch_2_QC_v1.rds")
+```
 
-geneMap <- bulkFilter %>%
+## 1.4.2 Graphs for quality control
+
+```{r}
+cpmAELog <- cpm(dgeAE, log = TRUE)
+cpmAELogFilter <- cpm(dgeAEFilter, log = TRUE)
+
+cpmAELogLong <- pivot_longer(as.data.frame(cpmAELog),
+                             cols = everything(),
+                             names_to = "Patient",
+                             values_to = "Log_CPM")
+cpmAELogLongFilter <- pivot_longer(as.data.frame(cpmAELogFilter),
+                                   cols = everything(),
+                                   names_to = "Patient",
+                                   values_to = "Log_CPM")
+```
+
+```{r}
+# Histogram of number of genes expressed
+ggplot(as.data.frame(colSums(cpmAE > 1)), aes(x = colSums(cpmAE > 1))) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = 10000) +
+  labs(x = "# of genes expressed",
+       y = "Frequency in patients")
+
+# Library size
+librarySizeBase <- as.data.frame(dgeAE$samples$lib.size)
+
+ggplot(librarySizeBase, aes(x = dgeAE$samples$lib.size)) +
+  geom_density() +
+  labs(title = "Base library sizes", 
+       x = "Library size", 
+       y = "Density")
+
+librarySizeAfter <- as.data.frame(dgeAEFilter$samples$lib.size)
+
+ggplot(librarySizeAfter, aes(x = dgeAEFilter$samples$lib.size)) +
+  geom_density() +
+  labs(title = "Filtered library sizes", 
+       x = "Library size", 
+       y = "Density")
+
+# Density plot of CPM distribution
+plotDensities(as.data.frame(cpmAELog), 
+              legend = FALSE,
+              main = "Base CPM density plot")
+plotDensities(as.data.frame(cpmAELogFilter), 
+              legend = FALSE,
+              main = "Filtered CPM density plot")
+
+# Boxplot of CPM distribution
+ggplot(cpmAELogLong, aes(x = Patient, y = Log_CPM)) +
+  geom_boxplot(outlier.shape = NA) +
+  coord_cartesian(ylim = c(NA, 8)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(title = "Base CPM boxplot", y = "Log-CPM") +
+  geom_hline(yintercept = mean(cpmAELogLong$Log_CPM), 
+             linetype = "dashed", color = "darkgreen")
+ggplot(cpmAELogLongFilter, aes(x = Patient, y = Log_CPM)) +
+  geom_boxplot(outlier.shape = NA) +
+  coord_cartesian(ylim = c(NA, 8)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(title = "Filtered CPM boxplot", y = "Log-CPM") +
+  geom_hline(yintercept = mean(cpmAELogLong$Log_CPM), 
+             linetype = "dashed", color = "darkgreen")
+
+# MDS Plot
+plotMDS(dgeAE, main = "Base MDS Plot")
+plotMDS(dgeAEFilter, main = "Filtered MDS Plot")
+```
+
+## 1.4.2 External bulk RNA-seq datasets
+
+### 1.4.2.1 GTEx
+
+```{r}
+gtexBulk <- CePa::read.gct("data/raw_data/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_reads.gct")
+gtexMetadata <- read.delim("data/metadata/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt")
+```
+
+# 1.5 Match bulk RNA-seq data to Tabula Sapiens
+
+------------------------------------------------------------------------
+
+```{r}
+# ------- AE atherosclerotic plaque bulk RNA-seq data (19182 matching genes with TS)
+# bulkToMatch <- get(load("data/processed_data/export_files/intermediate_R_objects/AE_bulk_data_654patients_filterRNA_notfinal.RData"))
+
+# ------- Pilot ccfRNA blood bulk RNA-seq data
+# bulkToMatch <- get(load("data/processed_data/export_files/intermediate_R_objects/pilot_blood_bulk_data_HGNC.RData"))
+
+# ------- AE ccfRNA blood bulk RNA-seq data batch 1 (21488 matching genes with TS)
+# bulkToMatch <- read_rds("data/processed_data/export_files/intermediate_R_objects/AE_bulk_blood_batch_1_QC.rds") # CPM > 1 & samples >= 15
+
+# bulkToMatch <- get(load("data/processed_data/export_files/intermediate_R_objects/AE_bulk_blood_batch_1_QC_v2.rds")) # CPM > 1 & samples >= 15 & expressed genes in patient < 10000
+
+# bulkToMatch <- get(load("data/processed_data/export_files/intermediate_R_objects/AE_bulk_blood_batch_1_QC_v3.rds")) # CPM > 1 & samples >= 15 & expressed genes in patient >= 8000
+
+# ------- AE ccfRNA blood bulk RNA-seq data batch 2 (29404 matching genes with TS)
+bulkToMatch <- get(load("data/processed_data/export_files/intermediate_R_objects/AE_bulk_blood_batch_2_QC_v1.rds")) # CPM > 1 & samples >= 15 & expressed genes in patient >= 10000
+```
+
+```{r}
+geneKeep <- intersect(rownames(get(paste0("ts", str_to_title(colCluster), 1))), bulkToMatch$ensembl_gene_id)
+
+geneMap <- bulkToMatch %>%
   filter(ensembl_gene_id %in% geneKeep) %>%
   select(ensembl_gene_id, symbol)
 
-bulkFinal <- bulkFilter %>%
+bulkFinal <- bulkToMatch %>%
   filter(ensembl_gene_id %in% geneKeep) %>%
   column_to_rownames("symbol") %>%
   select(-ensembl_gene_id)
 
-for(n in 1:1) {
-  objName <- paste0("tsCluster", nCelltypes, n)
+for(n in nSeurat) {
+  obj <- get(paste0("tsCluster", gsub("cluster", "", colCluster), n))
+  objSubset <- subset(obj, features = geneKeep)
   
-  obj <- get(objName)
-  obj <- subset(obj, features = geneKeep)
-  assign(objName, obj)
+  newObjName <- paste0("tsClusterFilter", gsub("cluster", "", colCluster), n)
+  assign(newObjName, objSubset)
 }
 
-rm(list = setdiff(ls(), c(paste0("tsCluster", nCelltypes, n), "bulkFinal", "nCelltypes", "geneMap")))
+rm(list = setdiff(ls(), c(paste0("tsClusterFilter", gsub("cluster", "", colCluster), c(1)), "bulkFinal", "geneMap", "colCluster", "nSeurat")))
 gc()
 ```
 
-### Format files for Scaden
-
-Currently, the features in the Seurat objects are labelled as Ensembl gene IDs. These will be changed to the corresponding gene symbols.
+# 1.6 Format files for Scaden
 
 ```{r}
 # ----- Generate count files with gene symbols for Scaden
 map <- setNames(geneMap$symbol, geneMap$ensembl_gene_id)
 
-for(n in 1:1) {
-  objName <- paste0("tsCluster", nCelltypes, n)
-  obj <- get(objName)
+for(n in nSeurat) {
+  obj <- get(paste0("tsClusterFilter", gsub("cluster", "", colCluster), n))
   
-  countsName <- paste0("tsCounts", nCelltypes, n)
+  countsName <- paste0("tsCounts", gsub("cluster", "", colCluster), n)
   counts <- obj[["RNA"]]$counts %>%
     as.data.frame() %>%
     t()
@@ -262,11 +377,10 @@ for(n in 1:1) {
 
 # ----- Generate celltype files for Scaden
 
-for(n in 1:1) {
-  objName <- paste0("tsCluster", nCelltypes, n)
-  obj <- get(objName)
-  
-  celltypesName <- paste0("tsCellTypes", nCelltypes, n)
+for(n in nSeurat) {
+  obj <- get(paste0("tsClusterFilter", gsub("cluster", "", colCluster), n))
+
+  celltypesName <- paste0("tsCellTypes", gsub("cluster", "", colCluster), n)
   celltypes <- Idents(obj) %>%
     as.data.frame() %>%
     rename(., Celltype = `.`)
@@ -274,40 +388,54 @@ for(n in 1:1) {
   assign(celltypesName, celltypes)
 }
 
-table(rownames(tsCounts71) == rownames(tsCellTypes71))
+table(rownames(tsCounts131) == rownames(tsCellTypes131))
 ```
 
+# 1.7 Export files
+
 ```{r}
-# write.table(bulkFinal,
-#             file = "output/scaden_cfRNA/format_files/scaden_plaque_for_cfRNA_bulk_data.txt",
-#             sep = "\t")
+write.table(bulkFinal,
+            file = "data/processed_data/scaden_bulk_rna_files/rTS_bAEblood2_v1_bulk_data.txt",
+            sep = "\t")
 
-write.table(tsCellTypes71,
-            file = "data/processed_data/scaden_sc_rna_ref_files/rTS_bAEplaque_c7_v1/rTS_bAEplaque_c7_v1_celltypes.txt",
+pattern <- "rTS_bAEblood2_c13_v1"
+path <- paste0("data/processed_data/scaden_sc_rna_ref_files/", pattern)
+
+if (!file.exists(path)) {
+  dir.create(path)
+  print("Folder created.")
+} else {
+  print("Folder already exists.")
+}
+
+write.table(get(paste0("tsCellTypes", gsub("cluster", "", colCluster), "1")),
+            file = paste0(path, "/", pattern, "_celltypes.txt"),
             sep = "\t", row.names = FALSE)
 
-write.table(tsCounts71,
-            file = "data/processed_data/scaden_sc_rna_ref_files/rTS_bAEplaque_c7_v1/rTS_bAEplaque_c7_v1_counts.txt",
+write.table(get(paste0("tsCounts", gsub("cluster", "", colCluster), "1")),
+            file = paste0(path, "/", pattern, "_counts.txt"),
             sep = "\t", row.names = FALSE)
+
+
 ```
 
-## Plots of the Seurat object
+# 1.8 Graphs
 
-### UMAP
+## 1.8.1 UMAP
 
 ```{r}
-tiff(paste0("output/figures/Tabula_Sapiens/TS_cluster_17_v2.tiff"), width = 12, height = 8, units = "in", res = 300)
+tiff(paste0("output/plots/umap/TS_cluster_17_presentation.tiff"), width = 12, height = 8, units = "in", res = 300)
 
 DimPlot_scCustom(tsCluster171,
                  reduction = "umap",
                  label.box = TRUE,
-                 label.size = 3,
+                 label.size = 4,
                  repel = TRUE)
 
 dev.off()
 ```
 
-### Sankey diagram
+## 1.8.2 Sankey diagram
 
 ```{r}
 metadata <- tsCluster171@meta.data %>%
@@ -332,14 +460,21 @@ p <- networkD3::sankeyNetwork(
   Target = "IDtarget",
   Value = "Freq",
   NodeID = "name",
-  sinksRight = FALSE
+  sinksRight = FALSE,
+  fontSize = 12
 )
 
-htmlwidgets::saveWidget(p, file="output/figures/HTMLWidget/tsCluster171_organ_distribution.html")
+print(p)
+
+htmlwidgets::saveWidget(p, file="output/plots/sankey_html/tsCluster171_presentation.html")
 ```
 
-## Session info
+# 1.9 Session info
 
 ```{r}
 devtools::session_info()
+```
+
+```{r}
+testTS <- readRDS("data/raw_data/nguyen_2024_Tabula_Sapiens.rds")
 ```
