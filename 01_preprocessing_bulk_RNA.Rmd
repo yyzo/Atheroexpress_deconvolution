@@ -1,0 +1,292 @@
+---
+title: "01_preprocessing_bulk_RNA"
+author: "Yayuan Zhu"
+date: "2024-07-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1.1 Introduction
+
+------------------------------------------------------------------------
+
+...
+
+# 1.2 Libraries
+
+------------------------------------------------------------------------
+
+```{r}
+library(tidyverse)
+
+library(edgeR)
+library(sva)
+
+source("functions/functions_01_R.R")
+```
+
+# 1.3 Import and format files
+
+------------------------------------------------------------------------
+
+```{r}
+# ---- HGNC symbols and ncRNA data ----
+completeHGNC <- read.delim("data/raw_data/hgnc_complete_set.txt")
+ncRNA <- read.delim("data/raw_data/HGNC_NonCodingRNA.txt")
+```
+
+```{r}
+# ---- AtheroExpress atherosclerotic plaque ----
+# aePlBulk1 <- read.delim("data/raw_data/AE_bulk_RNA_batch1.minRib.PC_07042023.txt") %>%
+#   rename("ensembl_gene_id" = "gene")
+# 
+# aePlBulk2 <- read.delim("data/raw_data/AE_bulk_RNA_batch2.minRib.PC_02082023.txt") %>%
+#   rownames_to_column("ensembl_gene_id")
+
+# ---- Pilot ccfRNA ----
+# load("data/raw_data/cfRNA_blood_pilot.RData")
+# pilotCcfBulk <- rawCounts_combined %>%
+#   rownames_to_column("ensembl_gene_id")
+
+# ---- AtheroExpress ccfRNA ----
+aeCcfBulk1 <- read.delim("data/raw_data/MM_MOK9065_combined_raw_counts.txt") %>%
+  rename("ensembl_gene_id" = "gene")
+colnames(aeCcfBulk1) <- gsub("AE", "ae", colnames(aeCcfBulk1))
+
+aeCcfBulk2 <- read.delim("data/raw_data/cfRNA_24042024_combined_raw_counts.txt") %>%
+  rename("ensembl_gene_id" = "gene")
+colnames(aeCcfBulk2) <- gsub("AE", "ae", colnames(aeCcfBulk2))
+colnames(aeCcfBulk2) <- gsub(".sam.counts", "", colnames(aeCcfBulk2))
+
+# ---- Acute coronary syndrome ccfRNA ----
+# acsBulk <- read.delim("data/raw_data/U_MOK10062_combined_raw_counts.txt") %>%
+#   rename("ensembl_gene_id" = "gene")
+# colnames(acsBulk) <- gsub(".sam.counts", "", colnames(acsBulk))
+
+# ---- GTEx bulk RNA-seq datasets ----
+# organToImport <- "skeletal_muscle"
+# 
+# nameDf <- paste0("gtex", str_to_title(organToImport))
+# df <- readRDS(paste0("data/raw_data/GTEx_bulk_subset_", organToImport, ".rds")) %>%
+#     as.data.frame() %>%
+#     rownames_to_column("ensembl_gene_id") %>%
+#     mutate(ensembl_gene_id = gsub("\\.\\d+", "", ensembl_gene_id)) %>%
+#     select(ensembl_gene_id, everything())
+# assign(nameDf, df)
+# rm(df)
+```
+
+If the bulk RNA-seq file contains the final processed counts, continue to Section 1.4. If the bulk RNA-seq file(s) require(s) additional filtering, normalization, and/or integration, continue to Section 1.5.
+
+# 1.4 Filter final bulk RNA-seq data on HGNC symbols and non-coding RNA genes
+
+------------------------------------------------------------------------
+
+```{r}
+bulkHgncNc <- filterBulkGenes(bulkData = gtexMuscle, hgncData = completeHGNC, ncData = ncRNA)
+
+saveRDS(bulkHgncNc, file = "data/processed_data/bulk_rna_filter_ncRNA_HGNC/bGTExMuscle.rds")
+```
+
+# 1.5 Bulk RNA-seq data refinement and integration
+
+------------------------------------------------------------------------
+
+## 1.5.1 Filter genes on HGNC symbols and non-coding RNA genes
+
+```{r}
+bulkHgncNc1 <- filterBulkGenes(bulkData = aeCcfBulk1, hgncData = completeHGNC, ncData = ncRNA) %>%
+  column_to_rownames("ensembl_gene_id")
+
+bulkHgncNc2 <- filterBulkGenes(bulkData = aeCcfBulk2, hgncData = completeHGNC, ncData = ncRNA) %>%
+  column_to_rownames("ensembl_gene_id")
+```
+
+```{r}
+bulkHgncNcBatches <- list(bulkHgncNc1, bulkHgncNc2)
+
+for(i in seq_along(bulkHgncNcBatches)) {
+  dgeName <- paste0("dge", i)
+  cpmName <- paste0("cpm", i)
+  
+  dge <- DGEList(counts = bulkHgncNcBatches[[i]])
+  cpm <- cpm(dge)
+  cpmLog <- cpm(dge, log = TRUE)
+    
+  assign(dgeName, dge)
+  assign(cpmName, cpm)
+
+  # Distribution of expression levels across patients
+  plotDensities(as.data.frame(cpmLog),
+                legend = FALSE,
+                main = paste0("Base CPM density plot"))
+  
+  # PCA plot
+  pcaPlot(cpmLog, title = paste0("PCA plot of cpm bulkHgncNc", i))
+}
+
+rm(dge, cpm, dgeName, cpmName, cpmLog)
+```
+
+## 1.5.2 Filter out lowly-expressed genes
+
+| Bulk RNA-seq data batches    | Gene expressed | Gene expressed in `x` patients (\~10%)            | Patient expressed `x` genes (histogram of expressed genes) |
+|------------------------------|----------------|---------------------------------------------------|------------------------------------------------------------|
+| AtheroExpress plaque batches | `cpm > 1`      | 50 (batch 1: 654 patients, batch 2: 471 patients) | 15300                                                      |
+| AtheroExpress ccfRNA         | `cpm > 1`      | 15 (batch 1: 150 patients, batch 2: 248 patients) | 8000                                                       |
+
+|                                                                                                                                                                                      |
+|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Note: for consistency between the batches, identical thresholds will be applied to both batches. The thresholds are selected are balanced on the characteristics of the two batches. |
+
+```{r}
+# Determine minimum number of genes one patient needs to express
+lapply(list(cpm1, cpm2), function(c) {
+  ggplot(as.data.frame(colSums(c > 1)), aes(x = colSums(c > 1))) +
+    geom_histogram(bins = 100) +
+    geom_vline(xintercept = 8000) +
+    labs(x = "# of genes expressed",
+         y = "Frequency in patients")
+})
+```
+
+```{r}
+dgeBatches <- list(dge1, dge2)
+cpmBatches <- list(cpm1, cpm2)
+
+for(i in seq_along(dgeBatches)) {
+  dgeHighExprName <- paste0("dgeHighExpr", i)
+  
+  # Genes need to be expressed (cpm > 1) in at least x patients
+  toKeepGenes <- rowSums(cpmBatches[[i]] > 1) >= 15
+  # Patients need to have at least x genes expressed
+  toKeepPatients <- colSums(cpmBatches[[i]] > 1) >= 8000
+
+  dgeHighExpr <- dgeBatches[[i]][toKeepGenes, toKeepPatients, keep.lib.sizes = FALSE]
+  cpmHighExpr <- cpm(dgeHighExpr, log = TRUE)
+
+  assign(dgeHighExprName, dgeHighExpr)
+
+  # Distribution of expression levels across patients
+  # plotDensities(as.data.frame(cpmHighExpr),
+  #               legend = FALSE, main = "Filtered lowly expressed genes CPM density plot")
+  
+  # PCA plot
+  # pcaPlot(cpmHighExpr, title = paste0("PCA plot of cpm bulkHighExpr", i))
+}
+
+rm(dgeHighExpr, dgeHighExprName, cpmHighExpr)
+```
+
+## 1.5.3 Normalization
+
+```{r}
+dgeHighExprBatches <- list(dgeHighExpr1, dgeHighExpr2)
+
+for(i in seq_along(dgeHighExprBatches)) {
+  normName <- paste0("dgeNorm", i)
+  
+  dgeNorm <- calcNormFactors(dgeHighExprBatches[[i]], method = "TMM")
+  cpmNorm <- cpm(dgeNorm, log = TRUE)
+  
+  assign(normName, dgeNorm)
+  
+  # Distribution of expression levels across patients
+  plotDensities(as.data.frame(cpmNorm),
+                legend = FALSE, main = "Normalization CPM density plot")
+  
+  # PCA plot
+  pcaPlot(cpmNorm, title = paste0("PCA plot of cpm normalized", i))
+}
+
+rm(dgeNorm, cpmNorm)
+```
+
+## 1.5.4 Extracting (and combining) normalized counts of batches
+
+```{r}
+dgeNormBatches <- list(dgeNorm1, dgeNorm2)
+
+bulkNorm <- lapply(dgeNormBatches, function(dge) {
+  cpm(dge)
+})
+
+bulkNorm1 <- as.data.frame(bulkNorm[[1]]) %>%
+  rownames_to_column("ensembl_gene_id") %>%
+  left_join(select(completeHGNC, ensembl_gene_id, symbol), by = "ensembl_gene_id") %>%
+  select(ensembl_gene_id, symbol, everything())
+
+bulkNorm2 <- as.data.frame(bulkNorm[[2]]) %>%
+  rownames_to_column("ensembl_gene_id") %>%
+  left_join(select(completeHGNC, ensembl_gene_id, symbol), by = "ensembl_gene_id") %>%
+  select(ensembl_gene_id, symbol, everything())
+```
+
+```{r}
+combineBulkNorm <- inner_join(bulkNorm1, bulkNorm2, by = c("ensembl_gene_id", "symbol"), suffix = c("_batch1", "_batch 2"))
+  
+metadataCombine <- bind_rows(data.frame(Patient = colnames(bulkNorm1)[-c(1, 2)], batch = as.factor("1")),
+                             data.frame(Patient = colnames(bulkNorm2)[-c(1, 2)], batch = as.factor("2")))
+
+table(duplicated(metadataCombine$Patient))
+```
+
+## 1.5.5 Batch effect
+
+```{r}
+combineBulkNormPCA <- combineBulkNorm %>%
+  column_to_rownames("ensembl_gene_id") %>%
+  select(-symbol)
+
+pca <- prcomp(t(combineBulkNormPCA), scale = TRUE)
+pcaData <- as.data.frame(pca$x)
+pcaData$batch <- metadataCombine$batch
+
+ggplot(pcaData, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = batch)) +
+  labs(title = "PCA of uncorrected bulk RNA-seq Data",
+       x = paste0("PC1: ", round(summary(pca)$importance[2,1] * 100, 2), "% Variance"),
+       y = paste0("PC2: ", round(summary(pca)$importance[2,2] * 100, 2), "% Variance")) +
+  theme_minimal()
+```
+
+Initially, there does seem to be a batch effect present to a certain extent. The two batches intersect with each other, but can still be recognized as distinct groups.
+
+```{r}
+batchCorrectedBulk <- ComBat_seq(counts = as.matrix(combineBulkNormPCA), batch = metadataCombine$batch)
+
+pcaCorrected <- prcomp(t(batchCorrectedBulk), scale = TRUE)
+pcaDataCorrected <- as.data.frame(pcaCorrected$x)
+pcaDataCorrected$batch <- metadataCombine$batch
+
+ggplot(pcaDataCorrected, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = batch)) +
+  labs(title = "PCA of batch-corrected bulk RNA-seq Data",
+       x = paste0("PC1: ", round(summary(pcaCorrected)$importance[2,1] * 100, 2), "% Variance"),
+       y = paste0("PC2: ", round(summary(pcaCorrected)$importance[2,2] * 100, 2), "% Variance")) +
+  theme_minimal()
+```
+
+The two batches are now blended together. The batch correction went well.
+
+```{r}
+bulkCombineCorrected <- as.data.frame(batchCorrectedBulk) %>%
+  rownames_to_column("ensembl_gene_id") %>%
+  left_join(select(completeHGNC, ensembl_gene_id, symbol), by = "ensembl_gene_id") %>%
+  select(ensembl_gene_id, symbol, everything())
+```
+
+## 1.5.6 Export preprocessed bulk RNA-seq file(s)
+
+```{r}
+saveRDS(bulkNorm1, "data/preprocessed_data/bAEccfRNA1.rds")
+saveRDS(bulkNorm2, "data/preprocessed_data/bAEccfRNA2.rds")
+```
+
+```{r}
+saveRDS(combineBulkNorm, "data/preprocessed_data/bAEccfRNACombine.rds") # Uncorrected for batches
+# saveRDS(bulkCombineCorrected, "data/preprocessed_data/bAEplaqueCombine.rds") # Corrected for batches
+```
