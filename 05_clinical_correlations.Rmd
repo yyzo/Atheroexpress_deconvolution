@@ -1,0 +1,576 @@
+---
+title: "05_clinical_correlations"
+author: "Yayuan Zhu"
+date: "2024-08-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 5.1 Introduction
+
+------------------------------------------------------------------------
+
+...
+
+# 5.2 Libraries
+
+------------------------------------------------------------------------
+
+```{r}
+library(tidyverse)
+library(broom)
+library(gtools) # Adds significance stars to tidy()
+library(rlang)
+
+library(rstatix)
+library(survival) # coxzph
+library(ranger)
+
+library(survminer) # ggcoxzph
+library(patchwork)
+# extrafont::font_import(pattern = "Helvetica")
+extrafont::loadfonts(quiet = TRUE)
+
+source("functions/functions_05_R.R")
+source("functions/functions_global_R.R")
+```
+
+# 5.3 (Average) predicted cellular proportions and corresponding patient data
+
+## 5.3.1 Patient data
+
+### 5.3.1.1 AtheroExpress cohort
+
+```{r}
+patientData <- haven::read_sav("data/metadata/AE_patient_data_20230803.sav") %>%
+  rename(patient = STUDY_NUMBER)
+
+patientData$patient <- gsub("^", "ae", patientData$patient)
+
+# Add the Symptoms.2g column
+patientData$Symptoms.2g <- case_when(patientData$Symptoms.4g == 0 | patientData$Symptoms.4g == 1~0,
+                                     patientData$Symptoms.4g == 2 | patientData$Symptoms.4g == 3~1)
+
+labelled::val_labels(patientData$Symptoms.2g) <- c(mild = 0, severe = 1)
+
+# Add the thrombus.bin column
+patientData$thrombus.bin <- case_when(patientData$thrombus == 0 | patientData$thrombus == 1~0,
+                                     patientData$thrombus == 2 | patientData$thrombus == 3~1,
+                                     patientData$thrombus == -888~-888)
+
+labelled::val_labels(patientData$thrombus.bin) <- c(`no/minor` = 0, `moderate/heavy` = 1, `not judgeable` = -888)
+
+# Alter order of the factors
+patientData$smc_macrophages_ratio <- factor(patientData$smc_macrophages_ratio, levels = c(1, 3, 2))
+```
+
+## 5.3.2 (Average) predicted cellular proportions
+
+```{r}
+proportionsAsFractions <- TRUE # MODIFY HERE; proportions as fractions are the default
+zTransform <- TRUE # MODIFY HERE; set to FALSE for Section 5.5.1
+
+pattern <- "rTS_bAEccfRNACombine_c17_v1" # MODIFY HERE
+
+pred <- readRDS(paste0("output/export_files/rds_files/scaden_wide_avg_prop_", pattern, ".rds")) %>% # MODIFY HERE; as wide format
+  rename_with(.fn = ~ str_replace_all(., c(" " = "_", "/" = "_")),
+              .cols = -patient)
+
+# Optional modification
+predModWide <- pred
+
+  # < Convert proportions to percentages >
+if(!proportionsAsFractions) {
+  predModWide <- predModWide %>%
+    mutate(across(-patient, ~ . * 100))
+}
+
+  # < Transform predicted cellular proportions to Z scores >
+if(zTransform) {
+  predModWide <- predModWide %>%
+    mutate(across(-patient, ~ c(scale(.))))
+}
+
+predModLong <- predModWide %>%
+  pivot_longer(cols = -patient, names_to = "cellType", values_to = "proportion")
+
+
+# Add patient characteristics
+predSympWide <- predModWide %>%
+  left_join(patientData, by = "patient")
+
+predSympLong <- predModLong %>%
+  left_join(patientData, by = "patient")
+```
+
+# 5.4 Statistical analysis
+
+## 5.4.1 Simple statistical tests
+
+```{r}
+# Test for normality
+resShapiro <- predSympLong %>%
+  group_by(cellType) %>%
+  summarise(pvalue = shapiro_test(proportion)$p.value) %>%
+  add_significance("pvalue")
+
+for(celltype in unique(predSympLong$cellType)) {
+  subset <- predSympLong %>%
+    filter(cellType == celltype)
+
+  qqp <- ggpubr::ggqqplot(subset$proportion) +
+    labs(title = paste("Q-Q plot for", celltype))
+
+  print(qqp)
+}
+
+# Test for homogeneity of variance
+resLevene <- predSympLong %>%
+  levene_test(proportion ~ cellType)
+```
+
+```{r}
+charCols <- c("Symptoms.2g", "Symptoms.4g", "Gender", "Macrophages.bin", "SMC.bin", "IPH.bin", "smc_macrophages_ratio", "plaquephenotype")
+
+# Order cell types based on proportion to make sure that the significance bars will match the right boxplot
+orderedCelltypes <- predSympLong %>%
+  group_by(cellType) %>%
+  summarise(proportion = mean(proportion)) %>%
+  arrange(proportion) %>%
+  pull(cellType)
+
+predSympLong$cellType <- factor(predSympLong$cellType, levels = orderedCelltypes)
+
+predSympLongFilter <- sympFilter(predSympLong, charCols)
+
+resStats <- list()
+resDunnList <- list()
+
+for(symp in names(predSympLongFilter)) {
+  df <- predSympLongFilter[[symp]]
+  
+  formula <- as.formula(sprintf("proportion ~ %s", symp))
+
+  if(n_distinct(df[[symp]]) > 2) {
+    res <- df %>%
+      group_by(cellType) %>%
+      kruskal_test(formula = formula) %>%
+      add_significance("p")
+    
+    if(any(res$p <= 0.05)) {
+      resDunn <- df %>%
+        group_by(cellType) %>%
+        dunn_test(formula = formula, p.adjust.method = "none") %>%
+        add_significance("p") %>%
+        add_xy_position(x = "cellType")
+    
+        resDunnList[[symp]] <- resDunn
+      }
+  } else {
+    res <- df %>%
+      group_by(cellType) %>%
+      wilcox_test(formula = formula) %>% 
+      add_significance("p") %>%
+      add_xy_position(x = "cellType")
+  }
+  resStats[[symp]] <- res
+}
+```
+
+## 5.4.2 General Linear Model
+
+### 5.4.2.1 Fit GLM
+
+```{r}
+# Variables to be used in the fitting of the GLM
+responseVar <- "Symptoms.2g" # MODIFY HERE
+
+covariates <- c() # MODIFY HERE
+
+cellTypes <- colnames(pred)[2:ncol(pred)]
+
+# Generate formulas to be used
+formulasGLM <- sapply(cellTypes, function(ct) {
+  if(length(covariates) > 0) {
+    as.formula(sprintf("%s ~ %s + %s", responseVar, ct, paste(covariates, collapse = " + ")))
+  } else {
+    as.formula(sprintf("%s ~ %s", responseVar, ct))
+  }
+})
+
+# Fit GLM
+resGLM <- lapply(formulasGLM, function(f) glm(f, family = binomial, data = predSympWide))
+
+lapply(resGLM, function(r) summary(r))
+
+# Extract results from all fitted models
+tidyResGLM <- lapply(seq_along(resGLM), function(i) {
+  tblRes <- tidy(resGLM[[i]], conf.int = TRUE) %>%
+    mutate(signif = stars.pval(p.value),
+           cellType = factor(names(resGLM)[i]))
+})
+
+tblAllResGLM <- do.call(rbind, tidyResGLM) %>%
+  select(cellType, everything())
+
+performanceResGLM <- lapply(resGLM, function(r) {
+  tblGlance <- glance(r)
+})
+
+tblAllPerfGLM <- do.call(rbind, performanceResGLM)
+```
+
+### 5.4.2.2 Validate GLM
+
+```{r}
+# Plot residual plots
+lapply(names(resGLM), function(name) {
+  par(mfrow = c(2, 2))
+  plot(resGLM[[name]], main = name)
+})
+```
+
+### 5.4.2.3 Export GLM all results
+
+```{r}
+
+```
+
+## 5.4.3 Cox Regression Model
+
+```{r}
+matCor <- cor(select(predModWide, -patient))
+
+ggcorrplot::ggcorrplot(matCor, hc.order = TRUE, type = "lower", lab = TRUE)
+```
+
+### 5.4.3.1 Fit Cox proportional hazards model
+
+```{r}
+# Variables to be used in the Cox regression
+timeVar <- "EP_major_time" # MODIFY HERE
+
+statusVar <- "EP_major" # MODIFY HERE
+
+covariates <- c("Gender", "Age") # MODIFY HERE
+
+cellTypes <- colnames(pred)[2:ncol(pred)]
+
+# Generate formulas to be used
+formulasCox <- sapply(cellTypes, function(ct) {
+  if(length(covariates) > 0) {
+    as.formula(sprintf("Surv(%s, %s) ~ %s + %s", timeVar, statusVar, ct, paste(covariates, collapse = " + ")))
+  } else {
+    as.formula(sprintf("Surv(%s, %s) ~ %s", timeVar, statusVar, ct))
+  }
+})
+
+# Fit Cox proportional hazards model
+resCox <- lapply(formulasCox, function(f) {
+  coxModel <- tryCatch(coxph(f, data = predSympWide), 
+                       error = function(e) {
+                         message("Cox regression failed for formula: ", deparse(f))
+                       })
+})
+
+lapply(resCox, function(r) summary(r))
+
+# Extract results from all fitted models
+tidyResCox <- lapply(seq_along(resCox), function(i) {
+  tblRes <- tidy(resCox[[i]], conf.int = TRUE, exponentiate = TRUE) %>%
+    mutate(signif = stars.pval(p.value),
+           cellType = factor(names(resCox)[i]))
+})
+
+tblAllResCox <- do.call(rbind, tidyResCox) %>%
+  select(cellType, everything()) %>%
+  rename(HR = estimate)
+
+performanceResCox <- lapply(resCox, function(x) {
+  tblGlance <- glance(x)
+})
+
+tblAllPerfCox <- do.call(rbind, performanceResCox)
+```
+
+### 5.4.3.2 Validate Cox regression model
+
+```{r}
+testCoxAssump <- lapply(resCox, function(r) cox.zph(r))
+print(testCoxAssump)
+
+pTestCoxAssump <- lapply(testCoxAssump, function(t) ggcoxzph(t))
+invisible(lapply(pTestCoxAssump, print))
+```
+
+```{r}
+lapply(resCox, function(r) ggcoxdiagnostics(r, type = "martingale") + labs(title = r))
+```
+
+```{r}
+lapply(resCox, function(r) ggcoxdiagnostics(r, type = "deviance") + labs(title = r))
+```
+
+```{r}
+lapply(resCox, function(r) ggcoxdiagnostics(r, type = "dfbeta"))
+```
+
+```{r}
+lapply(resCox, function(r) ggcoxdiagnostics(r, type = "scaledsch"))
+```
+
+```{r}
+lapply(resCox, function(r) ggcoxfunctional(r))
+```
+
+### 5.4.3.3 Export Cox regression results
+
+```{r}
+
+```
+
+# 5.5 Graphs
+
+## 5.5.1 Boxplot of predicted cellular proportion, divided on patient characteristics
+
+```{r}
+labelSymp <- list(Symptoms.2g = c("mild", "severe"),
+                  Symptoms.4g = c("asymptomatic", "ocular", "tia", "stroke"),
+                  Gender = c("female", "male"),
+                  Macrophages.bin = c("no/minor", "moderate/heavy"),
+                  SMC.bin = c("no/minor", "moderate/heavy"),
+                  IPH.bin = c("no", "yes"),
+                  smc_macrophages_ratio = c("smc dominant", "equal", "macrophages dominant"),
+                  plaquephenotype = c("fibrous", "fibroatheromatous", "atheromatous")) # MODIFY HERE
+
+listFilterPredSympLong <- list()
+
+for(symp in names(labelSymp)) {
+  filterPredSympLong <- predSympLong %>%
+    filter(!is.na(!!sym(symp)) & !!sym(symp) != -888 & !!sym(symp) != -999) %>%
+    select(patient, cellType, proportion, !!sym(symp))
+  
+  listFilterPredSympLong[[symp]] <- filterPredSympLong
+}
+```
+
+### 5.5.1.1 Without significance bars
+
+```{r}
+plotList <- list()
+
+for(symp in names(labelSymp)) {
+  nLabels <- as.character(length(labelSymp[[symp]]))
+  
+  pSymp <- ggplot(listFilterPredSympLong[[symp]], aes(x = reorder(cellType, proportion), y = proportion)) +
+  geom_boxplot(aes(fill = as.factor(!!sym(symp))), position = position_dodge(width = 0.8), width = 0.5, linewidth = 0.3, outlier.size = 1, outlier.shape = 1) +
+  labs(title = pattern,
+       x = "",
+       y = "Estimated cell type proportion",
+       fill = symp) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1),
+                     breaks = seq(0, 1, by = 0.1)) +
+  scale_fill_manual(values = blueColorPal[[nLabels]], labels = labelSymp[[symp]]) + # MODIFY HERE; custom color palette options in functions_figures_R.R
+  theme_classic(base_family = "Helvetica") +
+  boxplotTheme()
+  
+  plotList[[symp]] <- pSymp
+}
+
+print(plotList)
+```
+
+```{r}
+path <- paste0("output/plots/boxplot_cell_type_proportion_symptoms/", pattern)
+
+createDir(path)
+
+for(name in names(plotList)) {
+  tiff(paste0(path, "/", name, "_", pattern, ".tiff"))
+  
+  print(plotList[[name]])
+  
+  dev.off()
+}
+```
+
+### 5.5.1.2 With significance bars from Section 5.4.1
+
+```{r}
+signPlotList <- list()
+
+for(symp in names(resStats)) {
+  if(any(resStats[[symp]]$p.signif != "ns")) {
+    if(symp %in% names(resDunnList)) {
+      df <- resDunnList[[symp]]
+    } else {
+      df <- resStats[[symp]]
+    }
+    
+    pAdd <- plotList[[symp]]
+    
+    pSign <- pAdd +
+      stat_pvalue_manual(df, label = "p.signif", hide.ns = TRUE, tip.length = 0.5)
+    
+    signPlotList[[symp]] <- pSign
+  }
+}
+
+print(signPlotList)
+```
+
+```{r}
+pathSign <- paste0("output/plots/boxplot_cell_type_proportion_symptoms_significant/", pattern)
+
+if(length(signPlotList) != 0) {
+  createDir(pathSign)
+  for(name in names(signPlotList)) {
+    tiff(paste0(pathSign, "/", name, "_", pattern, ".tiff"))
+    
+    print(signPlotList[[name]])
+    
+    dev.off()
+    }
+  } else {
+    cat("List is empty")
+}
+```
+
+## 5.5.2 Forest plot
+
+### 5.5.2.1 GLM
+
+```{r}
+pGLM <- ggplot(allGLM, aes(x = cellType, y = beta)) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper, color = sig), 
+                width = 0.2, size = 1, linewidth = 0.6) +
+  geom_point(aes(fill = sig), shape = 21, size = 2, stroke = NA) +
+  geom_hline(yintercept = 0, linetype = "dotted", linewidth = 0.2) +
+  coord_flip() +
+  labs(x = "",
+       y = expression(beta ~ "coefficient (" * bold(symptomatic) * ")"),
+       color = expression(bold(significant))) +
+  scale_color_manual(values = c("#7C7C7C", "#00868B")) +
+  scale_fill_manual(values = c("black", "#00868B")) +
+  # scale_y_continuous(limits = c(-0.6, 0.5),
+  #                    breaks = seq(-0.5, 0.5, 0.25),
+  #                    labels = c("-0.5", "-0.25", "0", "0.25", "0.5")) +
+  guides(color = guide_legend(override.aes = list(shape = NA, linewidth = 0.6)),
+         fill = "none") +
+  theme_bw(base_family = "Helvetica") +
+  theme(panel.border = element_rect(linewidth = 0.4, color = "black"),
+        panel.grid.major = element_line(linewidth = 0.2),
+        axis.ticks = element_line(linewidth = 0.2),
+        axis.ticks.length = unit(0.04, "cm"),
+        axis.title = element_text(size = 6),
+        axis.text = element_text(size = 6),
+        legend.margin = margin(l = -3),
+        legend.title = element_text(size = 6, margin = margin(l = -6)),
+        legend.text = element_text(size = 6),
+        legend.key.size = unit(0.26, "cm"),
+        aspect.ratio = 1)
+
+print(pGLM)
+
+ggsave(paste0("output/plots/glm_forest_plot/tiff/scaden_", pattern, "_glm_gender.tiff", collapse = ""), 
+     width = 15, height = 15, units = "cm", dpi = 300)
+
+ggsave(paste0("output/plots/glm_forest_plot/svg/scaden_", pattern, "_glm_gender.svg", collapse = ""),
+     width = 15, height = 15, units = "cm", dpi = 300)
+```
+
+### 5.5.2.2 Cox regression model
+
+```{r}
+# https://rpubs.com/mbounthavong/forest_plots_r
+# Create the base plot for the different text columns
+baseCol <- ggplot(dfAllResCox, aes(y = cellType)) +
+  theme(text = element_text(family = "Helvetica"),
+        plot.title = element_text(size = 9, face = "bold", vjust = -1),
+        axis.text.x = element_text(color = "white", hjust = -3),
+        axis.line = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.ticks = element_blank(),
+        axis.title.y = element_blank(), 
+        legend.position = "none",
+        panel.background = element_blank(), 
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        plot.background = element_blank())
+
+pCellType <- baseCol +
+  geom_text(aes(x = -Inf, label = cellType), hjust = 0, size = 2.5, family = "Helvetica") +
+  ggtitle("Cell type") +
+  annotate("text", x = 0, y = Inf, label = "") +
+  theme(plot.title = element_text(hjust = 0))
+
+pForest <- ggplot(dfAllResCox, aes(x = cellType, y = HR)) +
+  geom_hline(yintercept = 1, linewidth = 0.3, color = "#878787") +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper, color = Sig.), width = NA, linewidth = 0.3) +
+  geom_point(aes(color = Sig.), shape = 22, size = 1, stroke = 0.8) +
+  geom_point(aes(fill = Sig.), shape = 22, size = 1.2, stroke = NA) + 
+  coord_flip() +
+  labs(x = "",
+       y = expression(bold("Hazard Ratio")),
+       color = expression(bold(significant))) +
+  scale_color_manual(values = c("#878787", "#4848F7")) + # Colors for the outlines
+  scale_fill_manual(values = c("black", "#FF0000")) + # Colors for the squares
+  # scale_y_continuous(limits = c(0.5, 1.5),
+                     # breaks = seq(0.5, 1.5, 0.5),
+                     # labels = c("0.5", "1", "1.5")) +
+  guides(color = "none",
+         fill = "none",
+         x = guide_axis(cap = "both")) +
+  theme_classic() +
+  theme(axis.text.x = element_text(family = "Helvetica", size = 7),
+        axis.title.x = element_text(family = "Helvetica", size = 7),
+        axis.line.y = element_blank(),
+        axis.ticks.y= element_blank(),
+        axis.text.y= element_blank(),
+        axis.title.y= element_blank(),
+        axis.ticks.length.x = unit(0.2, "cm"),
+        axis.line = element_line(color = "#878787", linewidth = 0.3),
+        axis.ticks = element_line(color = "#878787", linewidth = 0.3),
+        panel.background = element_blank(),
+        plot.background = element_blank())
+
+pHR <- baseCol +
+  geom_text(aes(x = 0, label = `HR [95%CI]`), hjust = 0.5, size = 2.5, family = "Helvetica") +
+  ggtitle("HR [95% CI]") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+pPValue <- baseCol +
+  geom_text(aes(x = 0, label = p), hjust = 0.5, size = 2.5, family = "Helvetica") +
+  ggtitle("p") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+pSig <- baseCol +
+  geom_text(aes(x = 0, label = `Sig.`), hjust = 0.5, size = 2.5, family = "Helvetica") +
+  ggtitle("Sig.") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+pCellType + pForest + pHR + pPValue + pSig + plot_layout(design = c(area(t = 0, l = 0, b = 5, r = 39),
+                                                                    area(t = 0, l = 36, b = 5, r = 57),
+                                                                    area(t = 0, l = 57, b = 5, r = 72),
+                                                                    area(t = 0, l = 69, b = 5, r = 80),
+                                                                    area(t = 0, l = 80, b = 5, r = 80)))
+
+ggsave(paste0("output/plots/cox_forest_plot/tiff/scaden_", pattern, "_cox.tiff", collapse = ""), 
+     width = 15, height = 15, units = "cm", dpi = 300)
+
+ggsave(paste0("output/plots/cox_forest_plot/svg/scaden_", pattern, "_cox.svg", collapse = ""),
+     width = 15, height = 15, units = "cm", dpi = 300)
+```
+
+# 5.6 Session info
+
+```{r}
+devtools::session_info()
+```
