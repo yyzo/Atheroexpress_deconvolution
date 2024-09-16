@@ -82,7 +82,7 @@ labelled::val_labels(patientData$hsCRP.bin) <- c(low = 0, high = 1)
 proportionsAsFractions <- TRUE # MODIFY HERE; proportions as fractions are the default
 zTransform <- TRUE # MODIFY HERE; set to FALSE for Section 5.5.1
 
-pattern <- "rTS_bAEccfRNACombine_c13_v1" # MODIFY HERE
+pattern <- "rTS_bAEccfRNACombine_c17_v1" # MODIFY HERE
 
 pred <- readRDS(paste0("output/export_files/rds_files/scaden_wide_avg_prop_", pattern, ".rds")) %>% # MODIFY HERE; as wide format
   rename_with(.fn = ~ str_replace_all(., c(" " = "_", "/" = "_")),
@@ -221,7 +221,7 @@ for(symp in names(predSympLongFilter)) {
 # Variables to be used in the fitting of the GLM
 responseVar <- "Symptoms.2g" # MODIFY HERE
 
-covariates <- c("batch") # MODIFY HERE
+covariates <- c("batch", "Gender", "Age") # MODIFY HERE; for interaction terms, add together in one string ("var1 * var2")
 
 cellTypes <- colnames(pred)[2:ncol(pred)] # MODIFY HERE
 
@@ -256,7 +256,7 @@ tidyResGLM <- lapply(seq_along(resGLM), function(i) { # p.adj only meaningful wh
 })
 
 tblAllResGLM <- do.call(rbind, tidyResGLM) %>%
-  select(cellType, everything())
+  select(cellType, term, sig, sig.adj, everything())
 
 if(glmFamily == "binomial") {
   tblAllResGLM <- mutate(tblAllResGLM, OR = exp(estimate))
@@ -273,29 +273,31 @@ tblAllPerfGLM <- do.call(rbind, performanceResGLM)
 ### 5.4.2.2 Validate GLM
 
 ```{r}
-# Check for multicollinearity among covariates
-if(length(covariates) > 0) {
-  dfCor <- predSympWide %>%
-    select(covariates) %>%
-    na.omit()
-  
-  matCor <- cor(dfCor)
-  
-  ggcorrplot::ggcorrplot(matCor, hc.order = TRUE, type = "lower", lab = TRUE)
-  
-  vifRes <- lapply(resGLM, function(r) { # VIF > 5 is problematic
-    vif(r)
-  })
-}
+if (glmFamily == "gaussian") {
+  if (length(covariates) > 0) {
+    # Check for multicollinearity among covariates
+    dfCor <- predSympWide %>%
+      select(covariates) %>%
+      na.omit()
+    
+    ggcorrplot::ggcorrplot(cor(dfCor), hc.order = TRUE, type = "lower", lab = TRUE)
+  }
 
-# Validating GLM dependent on chosen family
-if(glmFamily == "gaussian") {
   # Test for normality of residuals
-  residualShapiro <- lapply(resGLM, function(r) { # p.value <= 0.05 may indicate bad model fit
+  residualShapiro <- lapply(resGLM, function(r) { 
     res <- shapiro.test(residuals(r))
-    res$p.value
+    res$p.value # p.value <= 0.05 may indicate bad model fit
   })
-} else if(glmFamily == "binomial") {
+
+} else if (glmFamily == "binomial") {
+  if (length(covariates) > 0) {
+    # Check for multicollinearity among covariates
+    vifRes <- lapply(resGLM, function(r) { 
+      vif(r) # VIF > 5 is problematic
+    })
+  }
+  
+  # Test for normality of residuals
   performance_hosmer(resGLM[[1]], n_bins = 10)
 }
 
@@ -316,22 +318,52 @@ timeVar <- "EP_major_time" # MODIFY HERE
 
 statusVar <- "EP_major" # MODIFY HERE
 
-covariates <- c() # MODIFY HERE
+covariates <- c("batch", "Gender", "Age") # MODIFY HERE
 
-cellTypes <- colnames(pred)[2:ncol(pred)]
+useProportion <- TRUE # MODIFY HERE; use estimated cellular proportions (TRUE) or bulk RNA-seq gene counts (FALSE) for Cox regression
+```
+
+```{r}
+# Assess whether Cox regression will be done with cell type proportions or gene counts and prepare the data accordingly
+if(useProportion) {
+  cat("Gathering cell types for Cox regression...")
+  cellTypes <- colnames(pred)[2:ncol(pred)]
+  
+  coxType <- "cellTypes"
+  dataToUse <- "predSympWide"
+} else {
+  cat("Processing bulk RNA-seq gene counts data for Cox regression...")
+  bulkData <- read.table(file = "data/processed_data/scaden_bulk_rna_files/rTS_bAEccfRNACombine_bulk_data.txt", check.names = FALSE) # MODIFY HERE
+  
+  geneMarkersList <- readRDS(file = "output/export_files/rds_files/geneMarkersList18.rds") # MODIFY HERE; exported from 04_analysis_cellular_deconvolution.Rmd, Section 4.4.2
+  
+  bulkFilterMarkers <- bulkData %>%
+    filter(rownames(.) %in% unlist(geneMarkersList)) %>%
+    t() %>%
+    as.data.frame() %>%
+    rownames_to_column("patient")
+  
+  predSympGeneWide <- predSympWide %>%
+    left_join(bulkFilterMarkers, by = "patient")
+  
+  geneMarkers <- colnames(bulkFilterMarkers)[2:ncol(bulkFilterMarkers)]
+  
+  coxType <- "geneMarkers"
+  dataToUse <- "predSympGeneWide"
+}
 
 # Generate formulas to be used
-formulasCox <- sapply(cellTypes, function(ct) {
+formulasCox <- sapply(get(coxType), function(x) {
   if(length(covariates) > 0) {
-    as.formula(sprintf("Surv(%s, %s) ~ %s + %s", timeVar, statusVar, ct, paste(covariates, collapse = " + ")))
+    as.formula(sprintf("Surv(%s, %s) ~ %s + %s", timeVar, statusVar, x, paste(covariates, collapse = " + ")))
   } else {
-    as.formula(sprintf("Surv(%s, %s) ~ %s", timeVar, statusVar, ct))
+    as.formula(sprintf("Surv(%s, %s) ~ %s", timeVar, statusVar, x))
   }
 })
 
 # Fit Cox proportional hazards model
 resCox <- lapply(formulasCox, function(f) {
-  coxModel <- tryCatch(coxph(f, data = predSympWide), 
+  coxModel <- tryCatch(coxph(f, data = get(dataToUse)), 
                        error = function(e) {
                          message("Cox regression failed for formula: ", deparse(f))
                        })
@@ -342,12 +374,14 @@ lapply(resCox, function(r) summary(r))
 # Extract results from all fitted models
 tidyResCox <- lapply(seq_along(resCox), function(i) {
   tblRes <- tidy(resCox[[i]], conf.int = TRUE, exponentiate = TRUE) %>%
-    mutate(signif = stars.pval(p.value),
-           cellType = factor(names(resCox)[i]))
+    mutate(p.adj = p.adjust(p.value, method = "fdr"),
+           sig = stars.pval(p.value),
+           sig.adj = stars.pval(p.adj),
+           {{coxType}} := factor(names(resCox)[i]))
 })
 
 tblAllResCox <- do.call(rbind, tidyResCox) %>%
-  select(cellType, everything()) %>%
+  select({{coxType}}, everything()) %>%
   rename(HR = estimate)
 
 performanceResCox <- lapply(resCox, function(x) {
@@ -365,9 +399,71 @@ dfCor <- predSympWide %>%
   select(covariates) %>%
   na.omit()
 
-matCor <- cor(dfCor)
+ggcorrplot::ggcorrplot(cor(dfCor), hc.order = TRUE, type = "lower", lab = TRUE)
 
-ggcorrplot::ggcorrplot(matCor, hc.order = TRUE, type = "lower", lab = TRUE)
+
+```
+
+```{r}
+# Check for multicollinearity in covariates
+dfCor <- predSympWide %>%
+  select(covariates) %>%
+  na.omit()
+
+matCor <- cor(dfCor)
+ggcorrplot(matCor, hc.order = TRUE, type = "lower", lab = TRUE)
+
+# Test Cox proportional hazards assumptions
+testCoxAssump <- lapply(resCox, function(r) if (!is.null(r)) cox.zph(r) else NULL)
+pTestCoxAssump <- lapply(testCoxAssump, function(t) if (!is.null(t)) ggcoxzph(t) else NULL)
+invisible(lapply(pTestCoxAssump, print))
+
+# Plot diagnostics
+plotCoxDiagnostics <- function(r, type) {
+  if (!is.null(r)) {
+    ggcoxdiagnostics(r, type = type) + labs(title = deparse(formula(r)))
+  }
+}
+
+lapply(resCox, function(r) plotCoxDiagnostics(r, type = "martingale"))
+lapply(resCox, function(r) plotCoxDiagnostics(r, type = "deviance"))
+lapply(resCox, function(r) plotCoxDiagnostics(r, type = "dfbeta"))
+lapply(resCox, function(r) ggcoxdiagnostics(r, type = "scaledsch"))
+
+# Load additional libraries
+library(survcomp)
+library(survminer)
+
+# Model fit assessment
+c_index <- sapply(resCox, function(model) {
+  if (!is.null(model)) {
+    survConcordance(Surv(predSympWide[[timeVar]], predSympWide[[statusVar]]) ~ predict(model))$concordance
+  }
+})
+
+# Calibration plots
+# (Requires external libraries or custom implementation for detailed calibration plots)
+
+# Kaplan-Meier Curves
+predSympWide$predicted_risk <- sapply(resCox, function(model) if (!is.null(model)) predict(model, type = "risk") else NA)
+surv_fit <- survfit(Surv(predSympWide[[timeVar]], predSympWide[[statusVar]]) ~ predSympWide$predicted_risk, data = predSympWide)
+ggsurvplot(surv_fit)
+
+# Interaction terms (example)
+interaction_formula <- as.formula(sprintf("Surv(%s, %s) ~ %s * %s + %s", timeVar, statusVar, cellTypes[1], covariates[1], paste(covariates[-1], collapse = " + ")))
+interaction_model <- coxph(interaction_formula, data = predSympWide)
+summary(interaction_model)
+
+# Residual and influence diagnostics
+lapply(resCox, function(r) {
+  if (!is.null(r)) {
+    list(
+      martingale = ggcoxdiagnostics(r, type = "martingale"),
+      deviance = ggcoxdiagnostics(r, type = "deviance"),
+      dfbeta = ggcoxdiagnostics(r, type = "dfbeta")
+    )
+  }
+})
 ```
 
 ```{r}
@@ -376,28 +472,6 @@ print(testCoxAssump)
 
 pTestCoxAssump <- lapply(testCoxAssump, function(t) ggcoxzph(t))
 invisible(lapply(pTestCoxAssump, print))
-```
-
-```{r}
-lapply(resCox, function(r) ggcoxdiagnostics(r, type = "martingale") + labs(title = r))
-```
-
-```{r}
-lapply(resCox, function(r) ggcoxdiagnostics(r, type = "deviance") + labs(title = r))
-```
-
-```{r}
-lapply(resCox, function(r) ggcoxdiagnostics(r, type = "dfbeta"))
-```
-
-```{r}
-lapply(resCox, function(r) ggcoxdiagnostics(r, type = "scaledsch"))
-```
-
-### 5.4.3.3 Export Cox regression results
-
-```{r}
-
 ```
 
 # 5.5 Graphs
@@ -514,22 +588,28 @@ if(length(signPlotList) != 0) {
 ```{r}
 plotAllResGLM <- tblAllResGLM %>%
   filter(cellType == term) %>%
-  mutate(sig.bin = ifelse(sig != " " & sig != ".", "yes", "no"))
+  mutate(sig.bin = ifelse(sig != " " & sig != ".", "yes", "no"),
+         sig.adj.bin = ifelse(sig.adj != " " & sig.adj != ".", "yes", "no"))
 
 plotAllResGLM$sig.bin <- factor(plotAllResGLM$sig.bin, levels = c("no", "yes"))
+plotAllResGLM$sig.adj.bin <- factor(plotAllResGLM$sig.adj.bin, levels = c("no", "yes"))
+
+plotPAdj <- TRUE # MODIFY HERE; use the adjusted p.values (TRUE) or non-adjusted (FALSE)
+
+colPBin <- ifelse(plotPAdj, "sig.adj.bin", "sig.bin")
+
+glmPlotTitle <- ifelse(plotPAdj, paste(gsub("B_cell", "cellType", paste0(deparse(formulasGLM[[1]]))), "(adj)"), gsub("B_cell", "cellType", paste0(deparse(formulasGLM[[1]]))))
 ```
 
 ```{r}
-baseFormula <- gsub("B_cell", "cellType", paste0(deparse(formulasGLM[[1]])))
-
 pGLM <- ggplot(plotAllResGLM, aes(x = cellType, y = estimate)) +
-  geom_errorbar(aes(ymin = conf.low, ymax = conf.high, color = sig.bin), 
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high, color = !!rlang::sym(colPBin)), 
                 width = NA, linewidth = 0.4, show.legend = TRUE) +
-  geom_point(aes(color = sig.bin, shape = sig.bin), 
+  geom_point(aes(color = !!rlang::sym(colPBin), shape = !!rlang::sym(colPBin)), 
              size = 2, stroke = NA, show.legend = TRUE) +
-  geom_hline(yintercept = 0, linetype = "dotted", size = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dotted", linewidth = 0.2) +
   coord_flip() +
-  labs(title = baseFormula,
+  labs(title = glmPlotTitle,
        x = "",
        y = expression(beta ~ "coefficient"),
        color = expression(bold(significant))) +
@@ -544,7 +624,8 @@ pGLM <- ggplot(plotAllResGLM, aes(x = cellType, y = estimate)) +
          shape = "none") +
   theme_classic(base_family = "Helvetica",
                 base_line_size = 0.2) +
-  theme(axis.ticks.length = unit(0.07, "cm"),
+  theme(plot.title = element_text(size = 5, face = "bold"),
+        axis.ticks.length = unit(0.07, "cm"),
         axis.title = element_text(size = 6),
         axis.text = element_text(size = 6),
         axis.text.x = element_text(margin = margin(t = 2)),
@@ -556,27 +637,56 @@ pGLM <- ggplot(plotAllResGLM, aes(x = cellType, y = estimate)) +
         legend.key.size = unit(0.4, "cm"),
         aspect.ratio = 1)
 
+basePath <- ifelse(plotPAdj, "output/plots/glm_forest_plot/adjusted/", "output/plots/glm_forest_plot/")
+
+tiff(paste0(basePath, "scaden_", pattern, "_glm_", responseVar, "_", paste0(covariates, collapse = "_"),".tiff", collapse = ""), 
+     width = 10, height = 10, unit = "cm", res = 300)
 
 print(pGLM)
 
-ggsave(paste0("output/plots/glm_forest_plot/tiff/scaden_", pattern, "_glm_", responseVar,"_multi_batch.tiff", collapse = ""), dpi = 300)
-
-ggsave(paste0("output/plots/glm_forest_plot/svg/scaden_", pattern, "_glm_", responseVar,"_multi_batch.svg", collapse = ""), dpi = 300)
+dev.off()
 ```
 
 ### 5.5.2.2 Cox regression model
 
 ```{r}
 plotAllResCox <- tblAllResCox %>%
-  filter(cellType == term) %>%
-  mutate(`HR [95% CI]` = sprintf("%.3f [%.3f - %.3f]", HR, conf.low, conf.high),
-         `Sig.` = ifelse(p.value <= 0.05, "*", " "))
+  filter(!!rlang::sym(coxType) == term) %>%
+  mutate(HR_CI = sprintf("%.2f [%.2f - %.2f]", HR, conf.low, conf.high),
+         sig.bin = ifelse(sig != " " & sig != ".", "yes", "no"),
+         sig.adj.bin = ifelse(sig.adj != " " & sig.adj != ".", "yes", "no"))
+
+plotAllResCox$sig.bin <- factor(plotAllResCox$sig.bin, levels = c("no", "yes"))
+plotAllResCox$sig.adj.bin <- factor(plotAllResCox$sig.adj.bin, levels = c("no", "yes"))
+
+plotPAdj <- TRUE # MODIFY HERE; use the adjusted p.values (TRUE) or non-adjusted (FALSE)
+
+if(useProportion) {
+  baseFormulaCox <- paste0(statusVar, " ~ cellType", ifelse(!is.null(covariates), paste(" +", covariates, collapse = "+"), ""))
+} else {
+  baseFormulaCox <- paste0(statusVar, " ~ gene", ifelse(!is.null(covariates), paste(" +", covariates, collapse = "+"), ""))
+}
+
+if(plotPAdj) {
+  colP <- "p.adj"
+  colPBin <- "sig.adj.bin"
+  colPSig <- "sig.adj"
+  pPValueTitle <- "p adj"
+  baseFormulaCox <- paste(baseFormulaCox, "(adj)")
+} else {
+  colP <- "p.value"
+  colPBin <- "sig.bin"
+  colPSig <- "sig"
+  pPValueTitle <- "p"
+}
+
+pLabelsTitle <- str_to_sentence((gsub("([A-Z])", " \\1", coxType)))
 ```
 
 ```{r}
 # https://rpubs.com/mbounthavong/forest_plots_r
 # Create the base plot for the different text columns
-baseCol <- ggplot(plotAllResCox, aes(y = cellType)) +
+baseCol <- ggplot(plotAllResCox, aes(y = !!rlang::sym(coxType))) +
   theme(text = element_text(family = "Helvetica"),
         plot.title = element_text(size = 9, face = "bold", vjust = -1),
         axis.text.x = element_text(color = "white", hjust = -3),
@@ -592,31 +702,30 @@ baseCol <- ggplot(plotAllResCox, aes(y = cellType)) +
         panel.grid.minor = element_blank(), 
         plot.background = element_blank())
 
-pCellType <- baseCol +
-  geom_text(aes(x = -Inf, label = cellType), hjust = 0, size = 2.5, family = "Helvetica") +
-  ggtitle("Cell type") +
+pLabels <- baseCol +
+  geom_text(aes(x = -Inf, label = !!rlang::sym(coxType)), hjust = 0, size = 2.5, family = "Helvetica") +
+  ggtitle(pLabelsTitle) +
   annotate("text", x = 0, y = Inf, label = "") +
   theme(plot.title = element_text(hjust = 0))
 
-pForest <- ggplot(plotAllResCox, aes(x = cellType, y = HR)) +
+pForest <- ggplot(plotAllResCox, aes(x = !!rlang::sym(coxType), y = HR)) +
   geom_hline(yintercept = 1, linewidth = 0.3, color = "#878787") +
-  geom_errorbar(aes(ymin = conf.low, ymax = conf.high, color = Sig.), width = NA, linewidth = 0.3) +
-  geom_point(aes(color = Sig.), shape = 22, size = 1, stroke = 0.8) +
-  geom_point(aes(fill = Sig.), shape = 22, size = 1.2, stroke = NA) + 
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high, color = !!rlang::sym(colPBin)), width = NA, linewidth = 0.3) +
+  geom_point(aes(color = !!rlang::sym(colPBin), shape = !!rlang::sym(colPBin)), size = 1, stroke = 0.8) +
   coord_flip() +
-  labs(x = "",
+  labs(title = baseFormulaCox,
+       x = "",
        y = expression(bold("Hazard Ratio")),
        color = expression(bold(significant))) +
-  scale_color_manual(values = c("#878787", "#4848F7")) + # Colors for the outlines
-  scale_fill_manual(values = c("black", "#FF0000")) + # Colors for the squares
-  # scale_y_continuous(limits = c(0.5, 1.5),
-                     # breaks = seq(0.5, 1.5, 0.5),
-                     # labels = c("0.5", "1", "1.5")) +
+  scale_color_manual(values = c("black", "#4A97CA")) + # Colors for the outlines
+  scale_fill_manual(values = c("black", "#4A97CA")) + # Colors for the squares
+  scale_shape_manual(values = c(16, 15)) +
   guides(color = "none",
          fill = "none",
-         x = guide_axis(cap = "both")) +
+         shape = "none") +
   theme_classic() +
-  theme(axis.text.x = element_text(family = "Helvetica", size = 7),
+  theme(plot.title = element_text(size = 7),
+        axis.text.x = element_text(family = "Helvetica", size = 7),
         axis.title.x = element_text(family = "Helvetica", size = 7),
         axis.line.y = element_blank(),
         axis.ticks.y= element_blank(),
@@ -629,33 +738,34 @@ pForest <- ggplot(plotAllResCox, aes(x = cellType, y = HR)) +
         plot.background = element_blank())
 
 pHR <- baseCol +
-  geom_text(aes(x = 0, label = `HR [95% CI]`), hjust = 0.5, size = 2.5, family = "Helvetica") +
+  geom_text(aes(x = 0, label = HR_CI), hjust = 0.5, size = 2.5, family = "Helvetica") +
   ggtitle("HR [95% CI]") +
   theme(plot.title = element_text(hjust = 0.5))
 
 pPValue <- baseCol +
-  geom_text(aes(x = 0, label = sprintf("%.3f", p.value)), hjust = 0.5, size = 2.5, family = "Helvetica") +
-  ggtitle("p") +
+  geom_text(aes(x = 0, label = sprintf("%.2f", !!rlang::sym(colP))), hjust = 0.5, size = 2.5, family = "Helvetica") +
+  ggtitle(pPValueTitle) +
   theme(plot.title = element_text(hjust = 0.5))
 
 pSig <- baseCol +
-  geom_text(aes(x = 0, label = `Sig.`), hjust = 0.5, size = 2.5, family = "Helvetica") +
+  geom_text(aes(x = 0, label = !!rlang::sym(colPSig)), hjust = 0.5, size = 2.5, family = "Helvetica") +
   ggtitle("Sig.") +
   theme(plot.title = element_text(hjust = 0.5))
-```
 
-```{r}
-pCellType + pForest + pHR + pPValue + pSig + plot_layout(design = c(area(t = 0, l = 0, b = 5, r = 39),
+pLabels + pForest + pHR + pPValue + pSig + plot_layout(design = c(area(t = 0, l = 0, b = 5, r = 39),
                                                                     area(t = 0, l = 36, b = 5, r = 57),
                                                                     area(t = 0, l = 57, b = 5, r = 72),
                                                                     area(t = 0, l = 69, b = 5, r = 80),
                                                                     area(t = 0, l = 80, b = 5, r = 80)))
 
-ggsave(paste0("output/plots/cox_forest_plot/tiff/scaden_", pattern, "_cox_univariate.tiff", collapse = ""), 
-     width = 15, height = 15, units = "cm", dpi = 300)
+basePath <- "output/plots/cox_forest_plot/"
 
-ggsave(paste0("output/plots/cox_forest_plot/svg/scaden_", pattern, "_cox_univariate.svg", collapse = ""),
-     width = 15, height = 15, units = "cm", dpi = 300)
+addPath <- paste0(basePath, 
+                  ifelse(plotPAdj, "adjusted/", "non_adjusted/"),
+                  ifelse(useProportion, "cell_type_proportion/", "gene_marker_count/"))
+
+ggsave(paste0(addPath, "scaden_", pattern, "_cox_", paste0(covariates, collapse = "_"), ".tiff", collapse = ""), 
+     width = 10, height = 10, units = "cm", dpi = 300)
 ```
 
 # 5.6 Session info
