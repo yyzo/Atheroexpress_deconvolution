@@ -30,6 +30,7 @@ library(rstatix)
 library(survival) # coxzph
 library(ranger)
 library(performance) # Hosmer-Lemeshow goodness-of-fit test
+library(mice) # Impute missing data
 
 library(survminer) # ggcoxzph
 library(patchwork)
@@ -56,24 +57,27 @@ patientData$patient <- gsub("^", "ae", patientData$patient)
 patientData$Symptoms.2g <- case_when(patientData$Symptoms.4g == 0 | patientData$Symptoms.4g == 1 ~ 0,
                                      patientData$Symptoms.4g == 2 | patientData$Symptoms.4g == 3 ~ 1)
 
-labelled::val_labels(patientData$Symptoms.2g) <- c(mild = 0, severe = 1)
+patientData$Symptoms.2g <- factor(patientData$Symptoms.2g, levels = c(0, 1), labels = c("mild", "severe"))
 
 # Add thrombus.bin column
 patientData$thrombus.bin <- case_when(patientData$thrombus == 0 | patientData$thrombus == 1 ~ 0,
                                       patientData$thrombus == 2 | patientData$thrombus == 3 ~ 1,
                                       patientData$thrombus == -888 ~ -888)
 
-labelled::val_labels(patientData$thrombus.bin) <- c(`no/minor` = 0, `moderate/heavy` = 1, `not judgeable` = -888)
-
-# Alter order of the factors
-patientData$smc_macrophages_ratio <- factor(patientData$smc_macrophages_ratio, levels = c(1, 3, 2))
+patientData$thrombus.bin <- factor(patientData$thrombus.bin, levels = c(0, 1, -888), labels = c("no/minor", "moderate/heavy", "not judgeable"))
 
 # Add hsCRP.bin column
 patientData$hsCRP.bin <- case_when(patientData$hsCRP_plasma < 2 ~ 0,
                                    patientData$hsCRP_plasma >= 2 ~ 1,
                                    patientData$hsCRP_plasma >= 40 ~ NA)
 
-labelled::val_labels(patientData$hsCRP.bin) <- c(low = 0, high = 1)
+patientData$hsCRP.bin <- factor(patientData$hsCRP.bin, levels = c(0, 1), labels = c("low", "high"))
+
+# Alter order of the factors
+patientData$smc_macrophages_ratio <- factor(patientData$smc_macrophages_ratio, levels = c(1, 3, 2))
+
+# Change classes to factors
+patientData$Gender <- factor(patientData$Gender, levels = c(0, 1), labels = c("female", "male"))
 ```
 
 ## 5.3.2 (Average) predicted cellular proportions
@@ -130,8 +134,8 @@ if(str_detect(pattern, "AEccfRNACombine")) {
   # Add dateok.bin column
   predSympWide$dateok.bin <- case_when(predSympWide$dateok <= ymd("2009-01-22") ~ 0, 
                                        predSympWide$dateok > ymd("2009-01-22") ~ 1)
-  
-  labelled::val_labels(predSympWide$dateok.bin) <- c(`before/on 2009-01-22` = 0, `after 2009-01-22` = 1)
+
+  predSympWide$dateok.bin <- factor(predSympWide$dateok.bin, levels = c(0, 1), labels = c("before/on 2009-01-22", "after 2009-01-22"))
 }
 ```
 
@@ -218,19 +222,49 @@ for(symp in names(predSympLongFilter)) {
 ### 5.4.2.1 Fit GLM
 
 ```{r}
+sum(is.na(predSympWide$CAD_history))
+
+contCol <- c("BMI", "GFR_MDRD")
+binCol <- c("SmokerCurrent", "Hypertension.composite", "DM.composite", "PAOD", "CAD_history")
+
+# Impute missing values in columns with continuous data
+contColToImpute <- predSympWide %>%
+  select(patient, all_of(contCol)) %>%
+  mutate(across(all_of(contCol), as.numeric))
+
+groupColToImpute <- predSympWide %>%
+  select(patient, all_of(binCol)) %>%
+  mutate(across(all_of(binCol), as.factor))
+
+toImpute <- left_join(contColToImpute, groupColToImpute, by = "patient")
+
+colImputedList <- mice(toImpute, method = "pmm", seed = 2468)
+colImputed <- complete(colImputedList, 1)
+
+# Replace column with one containing imputed values
+predSympWideImputed <- predSympWide
+
+table(predSympWide$patient == predSympWideImputed$patient)
+
+for(col in colnames(toImpute)[-1]) {
+  predSympWideImputed[[col]] <- colImputed[[col]]
+}
+
+sum(is.na(predSympWideImputed$SmokerCurrent))
+```
+
+```{r}
 # Variables to be used in the fitting of the GLM
 responseVar <- "Symptoms.2g" # MODIFY HERE
 
-covariates <- c("batch", "Gender", "Age") # MODIFY HERE; for interaction terms, add together in one string ("var1 * var2")
+covariates <- c("batch", "Age", "BMI", "Gender", "GFR_MDRD", "hsCRP.bin") # MODIFY HERE; for interaction terms, add together in one string ("var1 * var2")
 
 cellTypes <- colnames(pred)[2:ncol(pred)] # MODIFY HERE
 
 # hist(predSympWide$hsCRP_plasma)
 
 glmFamily <- "binomial" # MODIFY HERE; dependent on responseVar
-```
 
-```{r}
 # Generate formulas to be used
 formulasGLM <- sapply(cellTypes, function(ct) {
   if(length(covariates) > 0) {
@@ -241,9 +275,9 @@ formulasGLM <- sapply(cellTypes, function(ct) {
 })
 
 # Fit GLM
-resGLM <- lapply(formulasGLM, function(f) glm(f, family = glmFamily, data = predSympWide))
+resGLM <- lapply(formulasGLM, function(f) glm(f, family = glmFamily, data = predSympWideImputed))
 
-lapply(resGLM, function(r) summary(r))
+# lapply(resGLM, function(r) summary(r))
 
 # Extract results from all fitted models
 tidyResGLM <- lapply(seq_along(resGLM), function(i) { # p.adj only meaningful when covariates present
@@ -318,7 +352,7 @@ timeVar <- "EP_major_time" # MODIFY HERE
 
 statusVar <- "EP_major" # MODIFY HERE
 
-covariates <- c("batch", "Gender", "Age") # MODIFY HERE
+covariates <- c("batch", "Gender", "Age", "BMI", "CAD_history") # MODIFY HERE
 
 useProportion <- TRUE # MODIFY HERE; use estimated cellular proportions (TRUE) or bulk RNA-seq gene counts (FALSE) for Cox regression
 ```
@@ -659,7 +693,7 @@ plotAllResCox <- tblAllResCox %>%
 plotAllResCox$sig.bin <- factor(plotAllResCox$sig.bin, levels = c("no", "yes"))
 plotAllResCox$sig.adj.bin <- factor(plotAllResCox$sig.adj.bin, levels = c("no", "yes"))
 
-plotPAdj <- TRUE # MODIFY HERE; use the adjusted p.values (TRUE) or non-adjusted (FALSE)
+plotPAdj <- FALSE # MODIFY HERE; use the adjusted p.values (TRUE) or non-adjusted (FALSE)
 
 if(useProportion) {
   baseFormulaCox <- paste0(statusVar, " ~ cellType", ifelse(!is.null(covariates), paste(" +", covariates, collapse = "+"), ""))
