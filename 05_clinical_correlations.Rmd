@@ -23,7 +23,6 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(broom)
 library(gtools) # Adds significance stars to tidy()
-library(rlang)
 
 library(car) # Calculate VIF
 library(rstatix)
@@ -43,9 +42,7 @@ source("functions/functions_global_R.R")
 
 # 5.3 (Average) predicted cellular proportions and corresponding patient data
 
-## 5.3.1 Patient data
-
-### 5.3.1.1 AtheroExpress cohort
+## 5.3.1 Athero-Express patient data
 
 ```{r}
 patientData <- haven::read_sav("data/metadata/AE_patient_data_20230803.sav") %>%
@@ -72,12 +69,6 @@ patientData$hsCRP.bin <- case_when(patientData$hsCRP_plasma < 2 ~ 0,
                                    patientData$hsCRP_plasma >= 40 ~ NA)
 
 patientData$hsCRP.bin <- factor(patientData$hsCRP.bin, levels = c(0, 1), labels = c("low", "high"))
-
-# Alter order of the factors
-patientData$smc_macrophages_ratio <- factor(patientData$smc_macrophages_ratio, levels = c(1, 3, 2))
-
-# Change classes to factors
-patientData$Gender <- factor(patientData$Gender, levels = c(0, 1), labels = c("female", "male"))
 ```
 
 ## 5.3.2 (Average) predicted cellular proportions
@@ -141,6 +132,67 @@ if(str_detect(pattern, "AEccfRNACombine")) {
 
 ```{r}
 rm(predModLong, predModWide)
+```
+
+### 5.3.2.1 Impute missing values
+
+```{r}
+# sum(is.na(predSympWide$DM.composite))
+
+contCol <- c("BMI", "GFR_MDRD") # MODIFY HERE
+binCol <- c("SmokerCurrent", "PAOD", "CAD_history", "Med.statin.derived", "Med.Statin.LLD", "CI_history", "Calc.bin") # For Symptoms.2g and MACE
+
+# Prepare columns for imputation
+contColToImpute <- predSympWide %>%
+  select(patient, all_of(contCol)) %>%
+  mutate(across(all_of(contCol), as.numeric))
+
+groupColToImpute <- predSympWide %>%
+  select(patient, all_of(binCol)) %>%
+  mutate(across(all_of(binCol), as.factor))
+
+toImpute <- left_join(contColToImpute, groupColToImpute, by = "patient")
+
+# Define imputation methods: 'pmm' for continuous, 'logreg' for binary
+meth <- make.method(toImpute)
+meth[contCol] <- "pmm"
+meth[binCol] <- "logreg"
+
+colImputedList <- mice(toImpute, method = meth, seed = 2468)
+colImputed <- complete(colImputedList, 1)
+
+# Replace column with one containing imputed values
+predSympWideImputed <- predSympWide
+
+table(predSympWide$patient == predSympWideImputed$patient)
+
+for(col in colnames(toImpute)[-1]) {
+  predSympWideImputed[[col]] <- colImputed[[col]]
+}
+
+# sum(is.na(predSympWideImputed$Calc.bin))
+```
+
+### 5.3.2.2 Add gene counts from bulk RNA-seq data
+
+```{r}
+bulkData <- read.table(file = "data/processed_data/scaden_bulk_rna_files/rTS_bAEccfRNACombine_bulk_data.txt", check.names = FALSE) # MODIFY HERE
+
+geneMarkersList <- readRDS(file = "output/export_files/rds_files/geneMarkersList18.rds") # MODIFY HERE; exported from 04_analysis_cellular_deconvolution.Rmd, Section 4.4.2
+
+paperGeneMarkers <- readRDS(file = "output/export_files/rds_files/macrophagePaperGeneMarkers.rds")
+
+genesToFilter <- c(unlist(geneMarkersList), paperGeneMarkers)
+
+bulkFilterMarkers <- bulkData %>%
+  filter(rownames(.) %in% genesToFilter) %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("patient") %>%
+  rename_with(~ paste0("bulk_", .), -patient)
+
+predSympWideImputedGene <- predSympWideImputed %>%
+  left_join(bulkFilterMarkers, by = "patient")
 ```
 
 # 5.4 Statistical analysis
@@ -222,75 +274,55 @@ for(symp in names(predSympLongFilter)) {
 ### 5.4.2.1 Fit GLM
 
 ```{r}
-sum(is.na(predSympWide$CAD_history))
-
-contCol <- c("BMI", "GFR_MDRD")
-binCol <- c("SmokerCurrent", "Hypertension.composite", "DM.composite", "PAOD", "CAD_history")
-
-# Impute missing values in columns with continuous data
-contColToImpute <- predSympWide %>%
-  select(patient, all_of(contCol)) %>%
-  mutate(across(all_of(contCol), as.numeric))
-
-groupColToImpute <- predSympWide %>%
-  select(patient, all_of(binCol)) %>%
-  mutate(across(all_of(binCol), as.factor))
-
-toImpute <- left_join(contColToImpute, groupColToImpute, by = "patient")
-
-colImputedList <- mice(toImpute, method = "pmm", seed = 2468)
-colImputed <- complete(colImputedList, 1)
-
-# Replace column with one containing imputed values
-predSympWideImputed <- predSympWide
-
-table(predSympWide$patient == predSympWideImputed$patient)
-
-for(col in colnames(toImpute)[-1]) {
-  predSympWideImputed[[col]] <- colImputed[[col]]
-}
-
-sum(is.na(predSympWideImputed$SmokerCurrent))
-```
-
-```{r}
 # Variables to be used in the fitting of the GLM
-responseVar <- "Symptoms.2g" # MODIFY HERE
-
-covariates <- c("batch", "Age", "BMI", "Gender", "GFR_MDRD", "hsCRP.bin") # MODIFY HERE; for interaction terms, add together in one string ("var1 * var2")
-
-cellTypes <- colnames(pred)[2:ncol(pred)] # MODIFY HERE
-
-# hist(predSympWide$hsCRP_plasma)
-
+responseVar <- "Calc.bin" # MODIFY HERE
+covariates <- c("batch") # MODIFY HERE; for interaction terms, add together in one string ("var1 * var2")
 glmFamily <- "binomial" # MODIFY HERE; dependent on responseVar
 
+useProportion <- TRUE # MODIFY HERE; use estimated cellular proportions (TRUE) or bulk RNA-seq gene counts (FALSE) for GLM
+
+# Assess whether GLM will be done with cell type proportions or gene counts and prepare the data accordingly
+if(useProportion) {
+  cellTypes <- colnames(pred)[2:ncol(pred)]
+  glmType <- "cellTypes"
+} else {
+  geneMarkers <- colnames(bulkFilterMarkers)[2:ncol(bulkFilterMarkers)]
+  glmType <- "geneMarkers"
+}
+
 # Generate formulas to be used
-formulasGLM <- sapply(cellTypes, function(ct) {
+formulasGLM <- sapply(get(glmType), function(x) {
   if(length(covariates) > 0) {
-    as.formula(sprintf("%s ~ %s + %s", responseVar, ct, paste(covariates, collapse = " + ")))
+    as.formula(sprintf("%s ~ %s + %s", responseVar, x, paste(covariates, collapse = " + ")))
   } else {
-    as.formula(sprintf("%s ~ %s", responseVar, ct))
+    as.formula(sprintf("%s ~ %s", responseVar, x))
   }
 })
 
 # Fit GLM
-resGLM <- lapply(formulasGLM, function(f) glm(f, family = glmFamily, data = predSympWideImputed))
+resGLM <- lapply(formulasGLM, function(f) {
+  glModel <- tryCatch(glm(f, family = glmFamily, data = predSympWideImputedGene), 
+                       error = function(e) {
+                         message("GLM fitting failed for formula: ", deparse(f))
+                       })
+})
 
 # lapply(resGLM, function(r) summary(r))
 
 # Extract results from all fitted models
-tidyResGLM <- lapply(seq_along(resGLM), function(i) { # p.adj only meaningful when covariates present
+tidyResGLM <- lapply(seq_along(resGLM), function(i) {
   tblRes <- tidy(resGLM[[i]], conf.int = TRUE) %>%
-    filter(term != "(Intercept)") %>%
-    mutate(p.adj = p.adjust(p.value, method = "fdr"),
-           sig = stars.pval(p.value),
-           sig.adj = stars.pval(p.adj),
-           cellType = factor(names(resGLM)[i]))
+    mutate(sig = stars.pval(p.value),
+           {{glmType}} := factor(names(resGLM)[i]))
 })
 
-tblAllResGLM <- do.call(rbind, tidyResGLM) %>%
-  select(cellType, term, sig, sig.adj, everything())
+tblAllResGLM <- do.call(rbind, tidyResGLM)
+
+tblSubsetResGLM <- tblAllResGLM %>%
+  filter(!!sym(glmType) == term) %>%
+  mutate(p.adj = p.adjust(p.value, method = "fdr"),
+         sig.adj = stars.pval(p.adj)) %>%
+  select(!!sym(glmType), p.value, p.adj, sig, sig.adj, estimate, conf.low, conf.high, everything(), -term)
 
 if(glmFamily == "binomial") {
   tblAllResGLM <- mutate(tblAllResGLM, OR = exp(estimate))
@@ -352,38 +384,17 @@ timeVar <- "EP_major_time" # MODIFY HERE
 
 statusVar <- "EP_major" # MODIFY HERE
 
-covariates <- c("batch", "Gender", "Age", "BMI", "CAD_history") # MODIFY HERE
+covariates <- c("batch", "DM.composite", "Hypertension.composite", "SmokerCurrent") # MODIFY HERE
 
 useProportion <- TRUE # MODIFY HERE; use estimated cellular proportions (TRUE) or bulk RNA-seq gene counts (FALSE) for Cox regression
-```
 
-```{r}
 # Assess whether Cox regression will be done with cell type proportions or gene counts and prepare the data accordingly
 if(useProportion) {
-  cat("Gathering cell types for Cox regression...")
   cellTypes <- colnames(pred)[2:ncol(pred)]
-  
   coxType <- "cellTypes"
-  dataToUse <- "predSympWide"
 } else {
-  cat("Processing bulk RNA-seq gene counts data for Cox regression...")
-  bulkData <- read.table(file = "data/processed_data/scaden_bulk_rna_files/rTS_bAEccfRNACombine_bulk_data.txt", check.names = FALSE) # MODIFY HERE
-  
-  geneMarkersList <- readRDS(file = "output/export_files/rds_files/geneMarkersList18.rds") # MODIFY HERE; exported from 04_analysis_cellular_deconvolution.Rmd, Section 4.4.2
-  
-  bulkFilterMarkers <- bulkData %>%
-    filter(rownames(.) %in% unlist(geneMarkersList)) %>%
-    t() %>%
-    as.data.frame() %>%
-    rownames_to_column("patient")
-  
-  predSympGeneWide <- predSympWide %>%
-    left_join(bulkFilterMarkers, by = "patient")
-  
   geneMarkers <- colnames(bulkFilterMarkers)[2:ncol(bulkFilterMarkers)]
-  
   coxType <- "geneMarkers"
-  dataToUse <- "predSympGeneWide"
 }
 
 # Generate formulas to be used
@@ -397,32 +408,37 @@ formulasCox <- sapply(get(coxType), function(x) {
 
 # Fit Cox proportional hazards model
 resCox <- lapply(formulasCox, function(f) {
-  coxModel <- tryCatch(coxph(f, data = get(dataToUse)), 
+  coxModel <- tryCatch(coxph(f, data = predSympWideImputedGene), 
                        error = function(e) {
                          message("Cox regression failed for formula: ", deparse(f))
                        })
 })
 
-lapply(resCox, function(r) summary(r))
+# lapply(resCox, function(r) summary(r))
 
 # Extract results from all fitted models
 tidyResCox <- lapply(seq_along(resCox), function(i) {
   tblRes <- tidy(resCox[[i]], conf.int = TRUE, exponentiate = TRUE) %>%
-    mutate(p.adj = p.adjust(p.value, method = "fdr"),
-           sig = stars.pval(p.value),
-           sig.adj = stars.pval(p.adj),
+    mutate(sig = stars.pval(p.value),
            {{coxType}} := factor(names(resCox)[i]))
 })
 
-tblAllResCox <- do.call(rbind, tidyResCox) %>%
-  select({{coxType}}, everything()) %>%
-  rename(HR = estimate)
+tblAllResCox <- do.call(rbind, tidyResCox)
+
+tblSubsetResCox <- tblAllResCox %>%
+  filter(!!sym(coxType) == term) %>%
+  mutate(p.adj = p.adjust(p.value, method = "fdr"),
+         sig.adj = stars.pval(p.adj)) %>%
+  rename(HR = estimate) %>%
+  select(!!sym(coxType), p.value, p.adj, sig, sig.adj, HR, conf.low, conf.high, everything(), -term)
 
 performanceResCox <- lapply(resCox, function(x) {
   tblGlance <- glance(x)
 })
 
-tblAllPerfCox <- do.call(rbind, performanceResCox)
+tblAllPerfCox <- do.call(rbind, performanceResCox) %>%
+  rownames_to_column({{coxType}}) %>%
+  select({{coxType}}, AIC, logLik, everything())
 ```
 
 ### 5.4.3.2 Validate Cox regression model
@@ -620,15 +636,14 @@ if(length(signPlotList) != 0) {
 ### 5.5.2.1 GLM
 
 ```{r}
-plotAllResGLM <- tblAllResGLM %>%
-  filter(cellType == term) %>%
+plotAllResGLM <- tblSubsetResGLM %>%
   mutate(sig.bin = ifelse(sig != " " & sig != ".", "yes", "no"),
          sig.adj.bin = ifelse(sig.adj != " " & sig.adj != ".", "yes", "no"))
 
 plotAllResGLM$sig.bin <- factor(plotAllResGLM$sig.bin, levels = c("no", "yes"))
 plotAllResGLM$sig.adj.bin <- factor(plotAllResGLM$sig.adj.bin, levels = c("no", "yes"))
 
-plotPAdj <- TRUE # MODIFY HERE; use the adjusted p.values (TRUE) or non-adjusted (FALSE)
+plotPAdj <- FALSE # MODIFY HERE; use the adjusted p.values (TRUE) or non-adjusted (FALSE)
 
 colPBin <- ifelse(plotPAdj, "sig.adj.bin", "sig.bin")
 
@@ -636,7 +651,7 @@ glmPlotTitle <- ifelse(plotPAdj, paste(gsub("B_cell", "cellType", paste0(deparse
 ```
 
 ```{r}
-pGLM <- ggplot(plotAllResGLM, aes(x = cellType, y = estimate)) +
+pGLM <- ggplot(plotAllResGLM, aes(x = !!rlang::sym(glmType), y = estimate)) +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high, color = !!rlang::sym(colPBin)), 
                 width = NA, linewidth = 0.4, show.legend = TRUE) +
   geom_point(aes(color = !!rlang::sym(colPBin), shape = !!rlang::sym(colPBin)), 
