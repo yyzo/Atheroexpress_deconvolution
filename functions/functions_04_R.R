@@ -56,39 +56,3 @@ loadAndProcessScaden <- function(basePath, nRuns) {
   
   return(list(listWidePred = listWidePred, listLongPred = listLongPred, avgWidePred = avgWidePred, avgLongPred = avgLongPred))
 }
-
-# < Loading BayesPrism cellular deconvolution predictions >
-getBayesPrismPred <- function(pathBayesPrism, fileBasePattern, nVersions) {
-  cat("Cellular deconvolution method: BayesPrism\n")
-  
-  if(length(nVersions) == 1) {
-    path <- paste0(pathBayesPrism, fileBasePattern, nVersions, ".rdata")
-    cat("Loading only one version:", path, "\n")
-    
-    return(loadAndProcessBayesPrism(path))
-  } else {
-    cat("Loading", length(nVersions), "versions:\n")
-    listPreds <- list()
-    
-    for(i in seq_along(nVersions)) {
-      version <- nVersions[i]
-      path <- paste0(pathBayesPrism, fileBasePattern, version, ".rdata")
-      cat(path, "\n")
-      
-      listPreds[[paste0("version", version)]] <- loadAndProcessBayesPrism(path)
-    }
-    return(listPreds)
-  }
-}
-
-loadAndProcessBayesPrism <- function(path) {
-  bp <- get(load(path))
-  widePred <- BayesPrism::get.fraction(bp = bp, which.theta = "final", state.or.type = "type") %>%
-    as.data.frame() %>%
-    tibble::rownames_to_column("patient")
-  
-  longPred <- widePred %>%
-    tidyr::pivot_longer(cols = -patient, names_to = "cellType", values_to = "proportion")
-  
-  return(list(widePred = widePred, longPred = longPred))
-}

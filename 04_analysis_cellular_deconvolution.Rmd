@@ -13,49 +13,44 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ------------------------------------------------------------------------
 
-...
+**Goal**: Analyze and visualize the predictions from cellular deconvolution analyses.
 
-# 4.2 Libraries
+**Overview workflow**:
 
-------------------------------------------------------------------------
+-   Obtain the average of 10 runs originating from the same dataset pair.
+
+-   Calculate correlations with other predictions or normalized gene counts from the corresponding bulk RNA-seq dataset.
+
+-   Visualize average predicted proportions and calculated correlations.
+
+**Note**: Users can adapt the code in chunks or lines marked with `# MODIFY HERE`. Other parts not annotated, such as file import and export, may also require changes to fit ones situation.
+
+**Libraries**:
 
 ```{r}
 library(tidyverse)
 library(BayesPrism)
 library(edgeR)
 
-library(ComplexHeatmap) # Gu, Z. (2022) Complex Heatmap Visualization, iMeta. DOI: 10.1002/imt2.43.
-# extrafont::font_import(pattern = "Helvetica")
-extrafont::loadfonts(quiet = TRUE)
+library(ComplexHeatmap)
 
 source("functions/functions_04_R.R")
 source("functions/functions_global_R.R")
 ```
 
-# 4.3 (Average) predicted cellular proportions
+# 4.2 (Average) predicted cellular proportions
 
 ------------------------------------------------------------------------
 
 ```{r}
-fileBasePattern <- "rTS_bAEccfRNACombine_c17_v" # MODIFY HERE
-fromScaden <- TRUE # MODIFY HERE; BayesPrism = FALSE
+pathScaden <- "output/scaden_predictions/" # MODIFY HERE
+fileBasePattern <- "rTS_bAEccfRNACombine_c17_v" # MODIFY HERE; base names of runs to import
 nVersions <- 1 # MODIFY HERE; number or vector of the version(s)
-
-nRuns <- seq_len(10) # MODIFY HERE; set of runs to import; irrelevant for BayesPrism webportal predictions due to set seed
+nRuns <- seq_len(10) # MODIFY HERE; set of runs to import
 ```
 
 ```{r}
-listPreds <- if(fromScaden) {
-  pathScaden <- "output/scaden_predictions/" # MODIFY HERE
-  
-  colProp <- "avgProportion"
-  getScadenPred(pathScaden, fileBasePattern, nVersions, nRuns)
-} else {
-  pathBayesPrism <- "output/bayesprism_predictions/" # MODIFY HERE
-  
-  colProp <- "proportion"
-  getBayesPrismPred(pathBayesPrism, fileBasePattern, nVersions)
-}
+listPreds <- getScadenPred(pathScaden, fileBasePattern, nVersions, nRuns)
 
 if(length(nVersions) == 1) {
   longPred <- listPreds[["avgLongPred"]] %||% listPreds[["longPred"]]
@@ -81,13 +76,13 @@ saveRDS(longPred, file = paste0("output/export_files/rds_files/scaden_long_avg_p
 saveRDS(widePred, file = paste0("output/export_files/rds_files/scaden_wide_avg_prop_", fileBasePattern, nVersions, ".rds"))
 ```
 
-# 4.4 Calculating correlations
+# 4.3 Calculating correlations
 
 ------------------------------------------------------------------------
 
-Optionally, the imported data can be correlated with either another type of cellular deconvolution results, e.g. using another scRNA-seq reference or bulk RNA-seq input, in Section 4.4.1. For correlating the imported cellular deconvolution results with cell type gene markers, continue to Section 4.4.2.
+Optionally, the imported data can be correlated with either another type of cellular deconvolution results, e.g. using another scRNA-seq reference or bulk RNA-seq input, in Section 4.3.1. For correlating the imported cellular deconvolution results with cell type gene markers, continue to Section 4.3.2.
 
-## 4.4.1 Correlation between different predicted cellular proportions
+## 4.3.1 Correlation between different predicted cellular proportions
 
 ```{r}
 predToCorW <- readRDS(file = "output/export_files/rds_files/scaden_wide_avg_prop_rTS_bAEccfRNACombine_c17_v1.rds") # MODIFY HERE
@@ -123,9 +118,8 @@ if(matchPatients) {
 }
 ```
 
-### 4.4.1.1 Dataframe for scatter plots
-
 ```{r}
+# Generate dataframe for scatter plots
 if(filteredPatients) {
   corPredScatter <- filterPredToCorL %>%
     left_join(filterWidePred, by = "patient")
@@ -138,9 +132,8 @@ corPredScatter %<>%
   rename(proportionToCor = !!sym(toCorrelateCol))
 ```
 
-### 4.4.1.2 Dataframe for heatmap
-
 ```{r}
+# Generate datafrome for heatmap
 if(filteredPatients) {
   print(table(filterPredToCorW$patient == filterWidePred$patient))
   
@@ -166,13 +159,13 @@ if(filteredPatients) {
 
 table(rownames(widePredRow) == rownames(predToCorWRow))
 
-corPredHeatmap <- cor(widePredRow, predToCorWRow) # NOTE: rows = widePredHeatmap; columns = predToCorrelateWideHeatmap
+corPredHeatmap <- cor(widePredRow, predToCorWRow) # rows = widePredHeatmap; columns = predToCorrelateWideHeatmap
 ```
 
-## 4.4.2 Correlation of predicted cellular proportions with cell type gene marker
+## 4.3.2 Correlation of predicted cellular proportions with cell type gene marker
 
 ```{r}
-bulkGenesToCor <- read.table(file = "data/processed_data/scaden_bulk_rna_files/rTS_bAEccfRNACombine_bulk_data.txt", check.names = FALSE) # MODIFY HERE; bulk data used to obtain the predictions from Section 4.3
+bulkGenesToCor <- read.table(file = "data/processed_data/scaden_bulk_rna_files/rTS_bAEccfRNACombine_bulk_data.txt", check.names = FALSE) # MODIFY HERE; bulk data used to obtain the predictions from Section 4.2
 
 nCellTypes <- ncol(widePred) - 1
 
@@ -249,7 +242,7 @@ if(!normBefore) {
 }
 ```
 
-# 4.5 Graphs
+# 4.4 Graphs
 
 ------------------------------------------------------------------------
 
@@ -257,9 +250,9 @@ if(!normBefore) {
 figPattern <- paste0(fileBasePattern, nVersions) # MODIFY HERE
 ```
 
-## 4.5.1 Boxplots of predicted cellular proportion(s)
+## 4.4.1 Boxplots of predicted cellular proportion(s)
 
-### 4.5.1.1 Multiple runs
+### 4.4.1.1 Boxplot of each run
 
 ```{r}
 pdf(paste0("output/plots/boxplot_cell_type_proportion/pdf/scaden_", figPattern, "_multiple_runs_predProp.pdf"))
@@ -273,7 +266,7 @@ for(n in nRuns) {
        y = "Estimated cell type proportion") +
   scale_y_continuous(labels = scales::percent_format(accuracy = 1),
                      breaks = seq(0, 1, by = 0.1)) +
-  theme_classic(base_family = "Helvetica") +
+  theme_classic() +
   boxplotTheme()
   
   print(pRunsPred)
@@ -282,7 +275,7 @@ for(n in nRuns) {
 dev.off()
 ```
 
-### 4.5.1.2 One (averaged) version
+### 4.4.1.2 One (averaged) version
 
 ```{r}
 pOnePred <- ggplot(longPred, aes(x = reorder(cellType, !!sym(colProp)), y = !!sym(colProp))) +
@@ -292,20 +285,19 @@ pOnePred <- ggplot(longPred, aes(x = reorder(cellType, !!sym(colProp)), y = !!sy
        y = "Estimated cell type proportion") +
   scale_y_continuous(labels = scales::percent_format(accuracy = 1),
                      breaks = seq(0, 1, by = 0.1)) +
-  theme_classic(base_family = "Helvetica") +
+  theme_classic() +
   boxplotTheme()
 
 print(pOnePred)
 
 ggsave(paste0("output/plots/boxplot_cell_type_proportion/tiff/scaden_", figPattern, "_predProp.tiff"),
-     width = 9, height = 12, units = "cm", dpi = 300) # 7x12 for 10 cell types; 13x13 for 17
+     width = 9, height = 12, units = "cm", dpi = 300)
 ```
 
-### 4.5.1.3 Groups
-
-#### 4.5.1.3.1 Different versions
+### 4.4.1.3 Groups
 
 ```{r}
+# ---- Different versions ----
 nVersionsCat <- paste(nVersions, collapse = "")
 
 combinedLongPredVersions <- data.frame()
@@ -318,9 +310,7 @@ for(n in nVersions) {
 }
 
 rm(longPredN)
-```
 
-```{r}
 pVersions <- ggplot(combinedLongPredVersions, aes(x = reorder(cellType, !!sym(colProp)), y = !!sym(colProp))) +
   geom_boxplot(aes(fill = version), position = position_dodge(width = 0.8), width = 0.5, linewidth = 0.3, outlier.size = 1, outlier.shape = 1) +
   labs(title = paste0(fileBasePattern, nVersionsCat),
@@ -329,7 +319,7 @@ pVersions <- ggplot(combinedLongPredVersions, aes(x = reorder(cellType, !!sym(co
   scale_y_continuous(labels = scales::percent_format(accuracy = 1),
                      breaks = seq(0, 1, by = 0.1)) +
   scale_fill_manual(values = blueColorPal[["3"]]) + # MODIFY HERE; custom color palette options in functions_figures_R.R
-  theme_classic(base_family = "Helvetica") +
+  theme_classic() +
   boxplotTheme()
 
 print(pVersions)
@@ -338,50 +328,13 @@ ggsave(paste0("output/plots/boxplot_cell_type_proportion/tiff/scaden_", fileBase
      width = 11, height = 12, units = "cm", dpi = 300)
 ```
 
-#### 4.5.1.3.2 Different deconvolution methods
-
 ```{r}
-scadenToPlot <- readRDS(paste0("output/export_files/scaden_long_avg_prop_", fileBasePattern, "1.rds")) %>% # MODIFY HERE
-  mutate(method = "scaden") %>%
-  rename("proportion" = "avgProportion")
-
-bpToPlot <- longPred %>% # MODIFY HERE
-  mutate(method = "bayesPrism")
-
-combinedMethodsPreds <- rbind(scadenToPlot, bpToPlot)
-```
-
-```{r}
-pMethods <- ggplot(combinedMethodsPreds, aes(x = reorder(cellType, proportion), y = proportion)) +
-  geom_boxplot(aes(fill = method), position = position_dodge(width = 0.8), width = 0.5, linewidth = 0.3, outlier.size = 1, outlier.shape = 1) +
-  labs(title = paste0("Compare deconvolution methods: ", figPattern),
-       x = "",
-       y = "Estimated cell type proportion") +
-  scale_y_continuous(labels = scales::percent_format(accuracy = 1),
-                     breaks = seq(0, 1, by = 0.1)) +
-  scale_fill_manual(values = blueColorPal2) + # MODIFY HERE; custom color palette options in functions_figures_R.R
-  theme_classic(base_family = "Helvetica") +
-  boxplotTheme()
-
-print(pMethods)
-
-ggsave(paste0("output/plots/boxplot_cell_type_proportion/tiff/bayesprism_scaden_", figPattern, "_predProp.tiff", collapse = ""), 
-     width = 10, height = 12, units = "cm", dpi = 300)
-
-ggsave(paste0("output/plots/boxplot_cell_type_proportion/svg/bayesprism_scaden_", figPattern, "_predProp.svg", collapse = ""),
-     width = 10, height = 12, units = "cm", dpi = 300)
-```
-
-#### 4.5.1.3.3 Different batches
-
-```{r}
+# ---- Different batches ----
 batches <- readRDS("data/metadata/AEccfRNA_batch_patientID.rds") # MODIFY HERE
 
 batchesLongPred <- longPred %>%
   left_join(batches, by = "patient")
-```
 
-```{r}
 pBatch <- ggplot(batchesLongPred, aes(x = reorder(cellType, !!sym(colProp)), y = !!sym(colProp))) +
   geom_boxplot(aes(fill = batch), position = position_dodge(width = 0.8), width = 0.5, linewidth = 0.3, outlier.size = 1, outlier.shape = 1) +
   labs(title = fileBasePattern,
@@ -390,19 +343,17 @@ pBatch <- ggplot(batchesLongPred, aes(x = reorder(cellType, !!sym(colProp)), y =
   scale_y_continuous(labels = scales::percent_format(accuracy = 1),
                      breaks = seq(0, 1, by = 0.1)) +
   scale_fill_manual(values = blueColorPal[["2"]]) + # MODIFY HERE; custom color palette options in functions_figures_R.R
-  theme_classic(base_family = "Helvetica") +
+  theme_classic() +
   boxplotTheme()
 
 print(pBatch)
 
 ggsave("test.tiff", 
      width = 7, height = 12, units = "cm", dpi = 300)
-
 ```
 
-#### 4.5.1.3.3 Different fractions
-
 ```{r}
+# ---- Different blood fractions ----
 fractions <- read.delim("data/metadata/cfRNA_blood_pilot_annotation.txt", header = TRUE) %>%
   rename("patient" = "ID")
 
@@ -416,7 +367,7 @@ pFractions <- ggplot(fractionsLongPred, aes(x = reorder(cellType, !!sym(colProp)
   scale_y_continuous(labels = scales::percent_format(accuracy = 1),
                      breaks = seq(0, 1, by = 0.1)) +
   scale_fill_manual(values = blueColorPal[["3"]]) + # MODIFY HERE; custom color palette options in functions_figures_R.R
-  theme_classic(base_family = "Helvetica") +
+  theme_classic() +
   boxplotTheme()
 
 print(pFractions)
@@ -425,42 +376,9 @@ ggsave("test4.tiff",
      width = 15, height = 10, units = "cm", dpi = 300)
 ```
 
-#### 4.5.1.3.4 Different types
+## 4.4.2 Correlation plots
 
-```{r}
-longPredrAE <- longPredrAE %>%
-  mutate(ref = "AE")
-
-longPredrTS <- longPredrTS %>%
-  mutate(ref = "TS")
-
-combine <- rbind(longPredrAE, longPredrTS)
-
-pMethods <- ggplot(combine, aes(x = reorder(cellType, avgProportion), y = avgProportion)) +
-  geom_boxplot(aes(fill = ref), position = position_dodge(width = 0.8), width = 0.5, linewidth = 0.3, outlier.size = 1, outlier.shape = 1) +
-  labs(x = "",
-       y = "Estimated cell type proportion") +
-  scale_y_continuous(labels = scales::percent_format(accuracy = 1),
-                     breaks = seq(0, 1, by = 0.1)) +
-  scale_fill_manual(values = blueColorPal[["2"]]) + # MODIFY HERE; custom color palette options in functions_figures_R.R
-  theme_classic(base_family = "Helvetica") +
-  boxplotTheme()
-
-print(pMethods)
-
-ggsave("test.tiff", 
-     width = 8, height = 12, units = "cm", dpi = 300)
-```
-
-## 4.5.2 Stacked bar plots
-
-```{r}
-
-```
-
-## 4.5.3 Correlation plots
-
-### 4.5.3.1 Scatter plots
+### 4.4.2.1 Scatter plots
 
 ```{r}
 path <- paste0("output/plots/correlation_scatter_plot/scaden_", figPattern, "_v2")
@@ -478,7 +396,7 @@ for(i in (4:ncol(corPredScatter))) {
     facet_wrap(~ cellType, nrow = 5, scales = "free") +
     labs(x = paste0("AEplaque1_c7_v1", colName),
          y = "AEplaque1_c7_v2") + # MODIFY HERE; x corresponds to imported data in Section 4.3; y corresponds to imported data in Section 4.4.1
-    theme_classic(base_family = "Helvetica") +
+    theme_classic() +
     theme(strip.background = element_blank(),
           panel.grid = element_blank(),
           axis.title = element_text(size = 10),
@@ -494,7 +412,7 @@ for(i in (4:ncol(corPredScatter))) {
 }
 ```
 
-### 4.5.3.2 Heatmap: between different predicted cellular proportions
+### 4.4.2.2 Heatmap: between different predicted cellular proportions
 
 ```{r}
 # NOTE: rows = widePredHeatmap; columns = predToCorrelateWideHeatmap
@@ -513,18 +431,15 @@ heatmapPred <- Heatmap(corPredHeatmap, col = heatmapPal, rect_gp = gpar(col = "w
 )
 
 print(heatmapPred)
-```
 
-```{r}
-tiff("output/plots/correlation_heatmap_predictions/scaden_rTS_bAEccfRNACombine_com4_c17.tiff",
-     width = 13, height = 11.5, units = "cm", res = 300) # MODIFY HERE
+tiff("output/plots/correlation_heatmap_predictions/scaden_rTS_bAEccfRNACombine_com4_c17.tiff", width = 13, height = 11.5, units = "cm", res = 300)
 
 print(heatmapPred)
 
 dev.off()
 ```
 
-### 4.5.3.3 Heatmap: between predicted cellular proportions and cell type gene marker
+### 4.4.2.3 Heatmap: between predicted cellular proportions and cell type gene marker
 
 ```{r}
 # NOTE: x-axis/columns = gene markers; y-axis/rows = cell types
@@ -551,25 +466,10 @@ heatmapGeneMarkers <- Heatmap(corGeneMarkers, col = heatmapPal, rect_gp = gpar(c
 )
 
 print(heatmapGeneMarkers)
-```
 
-```{r}
 tiff(paste0("output/plots/correlation_heatmap_gene_markers/", figPattern, "_genes.tiff"),
-     width = 19, height = 8, units = "cm", res = 300) # MODIFY HERE; 19x8 for 17 cell types
-
+     width = 19, height = 8, units = "cm", res = 300) # MODIFY HERE
 print(heatmapGeneMarkers)
 
 dev.off()
-```
-
-## 4.5.4 Bland-Altman plot
-
-```{r}
-
-```
-
-# 4.6 Session info
-
-```{r}
-devtools::session_info()
 ```

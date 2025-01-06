@@ -13,11 +13,19 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ------------------------------------------------------------------------
 
-...
+**Goal**: Clinical analysis of cellular deconvolution outcomes with characteristics of Athero-Express cohort
 
-# 5.2 Libraries
+**Overview workflow**:
 
-------------------------------------------------------------------------
+-   Generate combined dataframe of predicted cell type proportions and clinical characteristics.
+
+-   Perform simple statistical tests, GLM analysis, and Cox regression.
+
+-   Visualize outcomes of clinical analysis.
+
+**Note**: Users can adapt the code in chunks or lines marked with `# MODIFY HERE`. Other parts not annotated, such as file import and export, may also require changes to fit ones situation.
+
+**Libraries**:
 
 ```{r}
 library(tidyverse)
@@ -34,21 +42,18 @@ library(haven)
 
 library(patchwork)
 library(Polychrome)
-# extrafont::font_import(pattern = "Helvetica")
-extrafont::loadfonts(quiet = TRUE)
 
 source("functions/functions_05_R.R")
 source("functions/functions_global_R.R")
 ```
 
-# 5.3 (Average) predicted cellular proportions and corresponding patient data
+# 5.2 (Average) predicted cellular proportions and corresponding patient data
 
-## 5.3.1 Athero-Express patient data
+## 5.2.1 Athero-Express patient data
 
 ```{r}
 patientData <- haven::read_sav("data/metadata/AE_patient_data_20230803.sav") %>%
-  rename(patient = STUDY_NUMBER)
-
+  rename(patient = STUDY_NUMBER) # MODIFY HERE
 patientData$patient <- gsub("^", "ae", patientData$patient)
 
 # Add Symptoms.2g column
@@ -95,13 +100,13 @@ patientData <- patientData %>%
 patientData$EP_major <- as.numeric(patientData$EP_major)
 ```
 
-## 5.3.2 (Average) predicted cellular proportions
+## 5.2.2 (Average) predicted cellular proportions
 
 ```{r}
 proportionsAsFractions <- TRUE # MODIFY HERE; proportions as fractions are the default
-zTransform <- TRUE # MODIFY HERE; set to FALSE for Section 5.5.1 and 5.5.3
+zTransform <- TRUE # MODIFY HERE; set to FALSE for Section 5.4.1
 
-pattern <- "rTS_bGTExHeart_c17_v1" # MODIFY HERE
+pattern <- "rTS_bGTExHeart_c17_v1" # MODIFY HERE; base name of the predictions
 
 pred <- readRDS(paste0("output/export_files/rds_files/scaden_wide_avg_prop_", pattern, ".rds")) %>% # MODIFY HERE; as wide format
   rename_with(.fn = ~ str_replace_all(., c(" " = "_", "/" = "_")),
@@ -169,10 +174,9 @@ if(str_detect(pattern, "AEplaqueCombine")) {
 rm(predModLong, predModWide)
 ```
 
-### 5.3.2.1 Impute missing values
-
 ```{r}
-sum(is.na(predSympWide$MMP2))
+# ---- Impute missing values ----
+# sum(is.na(predSympWide$MMP2))
 
 contCol <- c("BMI", "GFR_MDRD", "FABP4", "VEGFA_plasma") # MODIFY HERE
 binCol <- c("SmokerCurrent", "PAOD", "CAD_history", "Med.statin.derived", "Calc.bin", "Macrophages.bin", "SMC.bin", "thrombus.bin", "IPH.bin", "collagen.bin") # MODIFY HERE
@@ -207,31 +211,9 @@ for(col in colnames(toImpute)[-1]) {
 # sum(is.na(predSympWideImputed$Calc.bin))
 ```
 
-### 5.3.2.2 Add gene counts from bulk RNA-seq data
+# 5.3 Clinical analysis
 
-```{r}
-bulkData <- read.table(file = "data/processed_data/scaden_bulk_rna_files/rAEplaque_bAEplaque1_bulk_data.txt", check.names = FALSE) # MODIFY HERE
-
-geneMarkersList <- readRDS(file = "output/export_files/rds_files/geneMarkersList18.rds") # MODIFY HERE; exported from 04_analysis_cellular_deconvolution.Rmd, Section 4.4.2
-
-paperGeneMarkers <- readRDS(file = "output/export_files/rds_files/macrophagePaperGeneMarkers.rds")
-
-genesToFilter <- c(unlist(geneMarkersList), paperGeneMarkers)
-
-bulkFilterMarkers <- bulkData %>%
-  filter(rownames(.) %in% genesToFilter) %>%
-  t() %>%
-  as.data.frame() %>%
-  rownames_to_column("patient") %>%
-  rename_with(~ paste0("bulk_", .), -patient)
-
-predSympWideImputedGene <- predSympWideImputed %>%
-  left_join(bulkFilterMarkers, by = "patient")
-```
-
-# 5.4 Statistical analysis
-
-## 5.4.1 Simple statistical tests
+## 5.3.1 Simple statistical tests
 
 ```{r}
 # Test for normality
@@ -258,7 +240,7 @@ resLevene <- predSympLong %>%
 ```{r}
 charCols <- c("Symptoms.2g", "Symptoms.4g", "Gender", "Macrophages.bin", "SMC.bin", "IPH.bin", "smc_macrophages_ratio", "plaquephenotype")
 
-# Order cell types based on proportion to make sure that the significance bars will match the right boxplot
+# Order cell types based on proportion to make sure that the significance bars will match the right boxplot in Section 5.4.1.
 orderedCelltypes <- predSympLong %>%
   group_by(cellType) %>%
   summarise(proportion = mean(proportion)) %>%
@@ -303,9 +285,7 @@ for(symp in names(predSympLongFilter)) {
 }
 ```
 
-## 5.4.2 General Linear Model
-
-### 5.4.2.1 Fit GLM
+## 5.3.2 General Linear Model
 
 ```{r}
 # Variables to be used in the fitting of the GLM
@@ -370,9 +350,8 @@ performanceResGLM <- lapply(resGLM, function(r) {
 tblAllPerfGLM <- do.call(rbind, performanceResGLM)
 ```
 
-### 5.4.2.2 Validate GLM
-
 ```{r}
+# ---- Validate GLM results ----
 if (glmFamily == "gaussian") {
   if (length(covariates) > 0) {
     # Check for multicollinearity among covariates
@@ -408,18 +387,13 @@ lapply(names(resGLM), function(name) {
 })
 ```
 
-## 5.4.3 Cox Regression Model
-
-### 5.4.3.1 Fit Cox proportional hazards model
+## 5.3.3 Cox Regression Model
 
 ```{r}
 # Variables to be used in the Cox regression
 timeVar <- "EP_major_time" # MODIFY HERE
-
 statusVar <- "EP_major" # MODIFY HERE
-
 covariates <- c("batch", "BMI", "Age", "Gender") # MODIFY HERE
-
 useProportion <- TRUE # MODIFY HERE; use estimated cellular proportions (TRUE) or bulk RNA-seq gene counts (FALSE) for Cox regression
 
 # Assess whether Cox regression will be done with cell type proportions or gene counts and prepare the data accordingly
@@ -475,9 +449,8 @@ tblAllPerfCox <- do.call(rbind, performanceResCox) %>%
   select({{coxType}}, AIC, logLik, everything())
 ```
 
-### 5.4.3.2 Validate Cox regression model
-
 ```{r}
+# ---- Validate Cox regression  results ----
 # Check for multicollinearity among covariates
 dfToCor <- predSympWideImputedGene %>%
   mutate_at(covariates, as.numeric) %>%
@@ -491,9 +464,9 @@ testCox <- lapply(resCox, cox.zph)
 print(testCox)
 ```
 
-# 5.5 Graphs
+# 5.4 Graphs
 
-## 5.5.1 Boxplot of predicted cellular proportion, divided on patient characteristics
+## 5.4.1 Boxplot of predicted cellular proportion, divided on patient characteristics
 
 ```{r}
 labelSymp <- list(Symptoms.2g = c("mild", "severe"),
@@ -516,9 +489,8 @@ for(symp in names(labelSymp)) {
 }
 ```
 
-### 5.5.1.1 Without significance bars
-
 ```{r}
+# ---- Without significance bars ----
 plotList <- list()
 
 for(symp in names(labelSymp)) {
@@ -540,9 +512,7 @@ for(symp in names(labelSymp)) {
 }
 
 print(plotList)
-```
 
-```{r}
 path <- paste0("output/plots/boxplot_cell_type_proportion_symptoms/", pattern)
 
 createDir(path)
@@ -556,9 +526,8 @@ for(name in names(plotList)) {
 }
 ```
 
-### 5.5.1.2 With significance bars from Section 5.4.1
-
 ```{r}
+# ---- With significance bars ----
 signPlotList <- list()
 
 for(symp in names(resStats)) {
@@ -579,9 +548,7 @@ for(symp in names(resStats)) {
 }
 
 print(signPlotList)
-```
 
-```{r}
 pathSign <- paste0("output/plots/boxplot_cell_type_proportion_symptoms_significant/", pattern)
 
 if(length(signPlotList) != 0) {
@@ -598,9 +565,9 @@ if(length(signPlotList) != 0) {
 }
 ```
 
-## 5.5.2 Forest plot
+## 5.4.2 Forest plot
 
-### 5.5.2.1 GLM
+### 5.4.2.1 GLM
 
 ```{r}
 plotAllResGLM <- tblSubsetResGLM %>%
@@ -658,15 +625,9 @@ basePath <- ifelse(plotPAdj, "output/plots/glm_forest_plot/adjusted/", "output/p
 # print(pGLM)
 # 
 # dev.off()
-
-print(pGLM)
-
-ggsave("test.svg", 
-     width = 12, height = 10, units = "cm", dpi = 300)
-
 ```
 
-### 5.5.2.2 Cox regression model
+### 5.4.2.2 Cox regression model
 
 ```{r}
 plotAllResCox <- tblSubsetResCox %>%
@@ -783,45 +744,4 @@ addPath <- paste0(basePath,
 
 ggsave(paste0(addPath, "scaden_", pattern, "_", paste0(covariates, collapse = "_"), ".svg", collapse = ""), 
      width = 10, height = 10, units = "cm", dpi = 300)
-```
-
-## 5.5.3 Stacked bar plot
-
-```{r}
-# Load necessary libraries
-library(ggplot2)
-
-# Check the unique levels of cellType
-unique_levels <- unique(predSympLong$cellType)  # Check what levels are in cellType
-
-# Create a color vector using palette.colors (ensure it matches the number of levels in cellType)
-p36 <- palette.colors(n = length(unique_levels), palette = "Polychrome 36")
-
-# Name the colors according to the levels of cellType
-names(p36) <- unique_levels
-
-# Create the plot with the Polychrome 36 palette and vertical line separating the batches
-ggplot(predSympLong, aes(fill = cellType, y = proportion, x = reorder(patient, dateok))) + 
-    geom_bar(position = "fill", stat = "identity") +
-    scale_fill_manual(values = p36) +  # Use the named Polychrome 36 palette
-    geom_vline(xintercept = batch_split - 0.5, linetype = "dashed", color = "black", size = 1) +  # Add vertical line between batches
-    theme_minimal()
-```
-
-```{r}
-unique_levels <- unique(predSympLong$cellType)
-
-pColors <- palette.colors(n = length(unique_levels), palette = "Tableau 10")
-
-names(pColors) <- unique_levels
-
-ggplot(predSympLong, aes(fill = cellType, y = proportion, x = reorder(patient, as.numeric(batch)))) + 
-  geom_bar(position = "fill", stat = "identity") +
-  scale_fill_manual(values = pColors)
-```
-
-# 5.6 Session info
-
-```{r}
-devtools::session_info()
 ```

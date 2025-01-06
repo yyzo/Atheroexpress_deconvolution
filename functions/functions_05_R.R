@@ -1,3 +1,7 @@
+# -----------
+# Functions belonging to 05_clinical_correlations.Rmd
+# -----------
+
 sympFilter <- function(sympData, toFilter) {
   listSympDataFiltered <- list()
   

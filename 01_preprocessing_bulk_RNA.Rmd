@@ -19,9 +19,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 -   For **all** the bulk RNA-seq datasets, remove genes without HGNC symbols and non-coding RNA genes.
 
--    If multiple bulk RNA-seq datasets need to be combined, both datasets will be filtered for lowly-expressed genes and normalized. After combination, batch effect correction will be applied.
+-   If multiple bulk RNA-seq datasets need to be combined, both datasets will be filtered for lowly-expressed genes and normalized. After combination, batch effect correction will be applied.
 
-**Note**: Users can adapt the code in chunks or lines marked with `# MODIFY HERE`.
+**Note**: Users can adapt the code in chunks or lines marked with `# MODIFY HERE`. Other parts not annotated, such as file import and export, may also require changes to fit ones situation.
 
 **Libraries**:
 
@@ -46,7 +46,6 @@ ncRNA <- read.delim("data/raw_data/HGNC_NonCodingRNA.txt")
 
 ```{r}
 # ---- Bulk RNA-seq dataset ----
-# Import the target bulk RNA-seq dataset. Below are datasets used in this project. Information on the data collection can be found in the GitHub repository.
 
 # [Athero-Express atherosclerotic plaque]
 # aePlBulk1 <- read.delim("data/raw_data/AE_bulk_RNA_batch1.minRib.PC_07042023.txt") %>%
@@ -118,7 +117,7 @@ if(multipleFiles) {
 ```
 
 ```{r}
-# Preparation for subsequent steps and gaining insights into the base files.
+# Preparation for subsequent steps and gaining insights into the base files
 for(i in seq_along(bulkHgncNcBatches)) {
   dgeName <- paste0("dge", i)
   cpmName <- paste0("cpm", i)
@@ -150,10 +149,10 @@ if(multipleFiles) {
 rm(dge, cpm, dgeName, cpmName, cpmLog)
 ```
 
-## 1.5.2 Filter out lowly-expressed genes
+## 1.4.2 Filter out lowly-expressed genes
 
 | Bulk RNA-seq data batches    | Gene expressed | Gene expressed in `x` patients (\~10%)            | Patient expressed `x` genes (histogram of expressed genes) |
-|---------------|---------------|-------------------|-----------------------|
+|-----------------|-----------------|------------------|---------------------|
 | AtheroExpress plaque batches | `cpm > 1`      | 50 (batch 1: 654 patients, batch 2: 471 patients) | 15300                                                      |
 | AtheroExpress ccfRNA batches | `cpm > 1`      | 15 (batch 1: 150 patients, batch 2: 248 patients) | 8000                                                       |
 
@@ -201,7 +200,7 @@ if(multipleFiles) {
 rm(dgeHighExpr, dgeHighExprName, cpmHighExpr)
 ```
 
-## 1.5.3 Normalization
+## 1.4.3 Normalization
 
 ```{r}
 for(i in seq_along(dgeHighExprBatches)) {
@@ -229,7 +228,7 @@ if(multipleFiles) {
 rm(dgeNorm, cpmNorm)
 ```
 
-## 1.5.4 Extracting (and combining) normalized counts of batches
+## 1.4.4 Combining normalized counts of batches and correcting for batch effect
 
 ```{r}
 bulkNorm <- lapply(dgeNormBatches, function(dge) {
@@ -258,8 +257,6 @@ metadataCombine <- bind_rows(data.frame(Patient = colnames(bulkNorm1)[-c(1, 2)],
 table(duplicated(metadataCombine$Patient))
 ```
 
-## 1.5.5 Batch effect
-
 ```{r}
 combineBulkNormPCA <- combineBulkNorm %>%
   column_to_rownames("ensembl_gene_id") %>%
@@ -269,17 +266,15 @@ pca <- prcomp(t(combineBulkNormPCA), scale = TRUE)
 pcaData <- as.data.frame(pca$x)
 pcaData$batch <- metadataCombine$batch
 
+# Initial evaluation of batch effect
 ggplot(pcaData, aes(x = PC1, y = PC2)) +
   geom_point(aes(color = batch)) +
   labs(title = "PCA of uncorrected bulk RNA-seq Data",
        x = paste0("PC1: ", round(summary(pca)$importance[2,1] * 100, 2), "% Variance"),
        y = paste0("PC2: ", round(summary(pca)$importance[2,2] * 100, 2), "% Variance")) +
   theme_minimal()
-```
 
-Initially, there does seem to be a batch effect present to a certain extent. The two batches intersect with each other, but can still be recognized as distinct groups.
-
-```{r}
+# Correct for batch effect
 batchCorrectedBulk <- ComBat_seq(counts = as.matrix(combineBulkNormPCA), batch = metadataCombine$batch)
 
 pcaCorrected <- prcomp(t(batchCorrectedBulk), scale = TRUE)
@@ -294,8 +289,6 @@ ggplot(pcaDataCorrected, aes(x = PC1, y = PC2)) +
   theme_minimal()
 ```
 
-The two batches are now blended together. The batch correction went well.
-
 ```{r}
 bulkCombineCorrected <- as.data.frame(batchCorrectedBulk) %>%
   rownames_to_column("ensembl_gene_id") %>%
@@ -303,7 +296,7 @@ bulkCombineCorrected <- as.data.frame(batchCorrectedBulk) %>%
   select(ensembl_gene_id, symbol, everything())
 ```
 
-## 1.5.6 Export preprocessed bulk RNA-seq file(s)
+## 1.4.5 Export preprocessed bulk RNA-seq file(s)
 
 ```{r}
 saveRDS(bulkNorm1, "data/preprocessed_data/bAEccfRNA1_v2.rds")
@@ -311,11 +304,9 @@ saveRDS(bulkNorm1, "data/preprocessed_data/bAEccfRNA1_v2.rds")
 if(multipleFiles) {
   saveRDS(bulkNorm2, "data/preprocessed_data/bAEccfRNA2_v2.rds")
 }
-```
 
-```{r}
 if(exists("bulkCombineCorrected")) {
-  saveRDS(bulkCombineCorrected, "data/preprocessed_data/bAEccfRNACombine_v2.rds") # Corrected for batches
+   # Corrected for batches
 } else if(exists("combineBulkNorm")) {
   saveRDS(combineBulkNorm, "data/preprocessed_data/bAEccfRNACombine_v2.rds") # Uncorrected for batches
 }
