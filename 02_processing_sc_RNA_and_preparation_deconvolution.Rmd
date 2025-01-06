@@ -3,6 +3,7 @@ title: "02_processing_sc_RNA_and_preparation_deconvolution"
 author: "Yayuan Zhu"
 date: "2024-08-19"
 output: html_document
+---gc()
 ---
 
 ```{r setup, include=FALSE}
@@ -27,8 +28,6 @@ library(reshape2)
 library(Seurat)
 
 library(scCustomize)
-
-source("functions/functions_02_R.R")
 ```
 
 # 2.3 Processing scRNA-seq reference
@@ -97,7 +96,7 @@ scTS <- read_rds("data/raw_data/Tabula_Sapiens_all_cells.rds")
 Idents(scTS) <- scTS@meta.data$cell_ontology_class
 
 # Only retain major contributing organs
-organsToInclude <- c("Blood", "Liver", "Lymph_Node", "Fat", "Bone_Marrow", "Heart", "Muscle", "Pancreas", "Large_Intestine", "Lung", "Small_Intestine", "Vasculature", "Kidney")
+organsToInclude <- c("Blood", "Liver", "Lymph_Node", "Fat", "Bone_Marrow", "Heart", "Muscle", "Pancreas", "Large_Intestine", "Lung", "Small_Intestine", "Vasculature", "Kidney", "Spleen")
 
 scTSMetadata <- scTS@meta.data %>%
   filter(tissue_in_publication %in% organsToInclude &
@@ -150,9 +149,12 @@ epithelialCells <- c("Kidney epithelial cell", "Enterocyte", "Hepatocyte", "Panc
 
 plaqueCells <- c("Monocyte", "Mesenchymal cell/fibroblast", "B cell", "Platelet", "Basophil/mast cell", "Neutrophil", "Erythrocyte", "Pericyte/smooth muscle cell", "T/NK cell", "Endothelial cell")
 
+cells7 <- c("Endothelial cell", "Epithelial cell", "Monocyte", "T/NK cell", "Neutrophil", "Mesenchymal cell/fibroblast", "Pericyte/smooth muscle cell")
+
 ctFreq %<>%
-  mutate(cluster13 = ifelse(cluster17 %in% epithelialCells, "Epithelial cell", cluster17)) %>%
-  mutate(cluster10 = ifelse(cluster13 %in% plaqueCells, cluster13, NA))
+  mutate(cluster13 = ifelse(cluster17 %in% epithelialCells, "Epithelial cell", cluster17),
+         cluster10 = ifelse(cluster13 %in% plaqueCells, cluster13, NA),
+         cluster7 = ifelse(cluster13 %in% cells7, cluster13, NA))
 ```
 
 ```{r}
@@ -166,9 +168,10 @@ for(name in names(cluster)) {
 scTSMetadata$cluster17[!(scTSMetadata$cluster17 %in% names(cluster))] <- NA
 
 scTSMetadata %<>%
-  mutate(cluster13 = ifelse(cluster17 %in% epithelialCells, "Epithelial cell", cluster17)) %>%
-  mutate(cluster10 = ifelse(cluster13 %in% plaqueCells, cluster13, NA)) %>%
-  mutate_at(c("cluster17", "cluster13", "cluster10"), factor)
+  mutate(cluster13 = ifelse(cluster17 %in% epithelialCells, "Epithelial cell", cluster17),
+         cluster10 = ifelse(cluster13 %in% plaqueCells, cluster13, NA),
+         cluster7 = ifelse(cluster13 %in% cells7, cluster13, NA)) %>%
+  mutate_at(c("cluster17", "cluster13", "cluster10", "cluster7"), factor)
 ```
 
 ```{r}
@@ -180,7 +183,7 @@ scTS@meta.data <- scTSMetadata
 As processing the original Tabula Sapiens Seurat object is too memory-heavy, the frequency of the different cell types will be capped at 1000. To achieve this, a maximum of 1000 cell types will be subsetted at random.
 
 ```{r}
-clusterToUse <- "cluster17" # MODIFY HERE
+clusterToUse <- "cluster13" # MODIFY HERE
 nSeurat <- seq_len(1) # MODIFY HERE; number of Seurat objects to create
 
 ctFreqNew <- as_tibble(table(Celltype = scTSMetadata[[clusterToUse]]))
@@ -228,7 +231,7 @@ gc()
 ------------------------------------------------------------------------
 
 ```{r}
-bulkToMatch <- read_rds("data/preprocessed_data/bAEccfRNA1.rds") # MODIFY HERE
+bulkToMatch <- read_rds("data/preprocessed_data/bAEccfRNACombine.rds") # MODIFY HERE
 
 aeRefToUse <- FALSE # MODIFY HERE
 
@@ -322,8 +325,8 @@ table(rownames(scTSCounts171) == rownames(scTSCellTypes171))
 ### 2.5.1.1 Export files
 
 ```{r}
-patternBulk <- "rTS_bAEccfRNA1" # MODIFY HERE
-patternRef <- "rTS_bAEccfRNA1_c17_v1" # MODIFY HERE
+patternBulk <- "rTS_bAEccfRNACombine_c17_v4" # MODIFY HERE
+patternRef <- "rTS_bAEccfRNACombine_c17_v4" # MODIFY HERE
 
 if(aeRefToUse) {
   cellTypesToExport <- "scAECellTypes"
@@ -369,7 +372,7 @@ if(aeRefToUse) {
     mutate(cell.state = "0") %>%
     na.omit()
 } else {
-  metadata <- scTSClusterFilterGenes171@meta.data # MODIFY HERE
+  metadata <- scTSClusterFilterGenes131@meta.data # MODIFY HERE
   
   if(clusterToUse == "cluster13") {
     cellProfile <- metadata %>%
@@ -392,18 +395,18 @@ if(aeRefToUse) {
 }
 
 # table(rownames(scAECounts) == cellProfile$cell.ID)
-table(rownames(scTSCounts171) == cellProfile$cell.ID)
+table(rownames(scTSCounts131) == cellProfile$cell.ID)
 ```
 
 ### 2.5.2.1 Export files
 
 ```{r}
-pattern <- "rTS_bAEccfRNA1_c17_v1" # MODIFY HERE
+pattern <- "rTS_bAEccfRNACombine_c13_v1" # MODIFY HERE
 
 if(aeRefToUse) {
   countsToExport <- "scAECounts"
 } else {
-  countsToExport <- "scTSCounts171" # MODIFY HERE
+  countsToExport <- "scTSCounts131" # MODIFY HERE
 }
 
 path <- paste0("data/processed_data/bayesprism_files/", pattern, "/")
@@ -425,13 +428,22 @@ write.csv(cellProfile, file = paste0(path, pattern, "_cell_profile.txt"), row.na
 ## 2.6.1 UMAP
 
 ```{r}
-tiff(paste0("output/plots/umap/TS_cluster_17_presentation.tiff"), width = 12, height = 8, units = "in", res = 300)
+meta <- scAEplaqueFilterFreq@meta.data
+Idents(scTSCluster101) <- scTSCluster101@meta.data$cell_ontology_class
 
-DimPlot_scCustom(tsCluster171,
+tiff("TS_cluster_10_presentation.tiff", width = 12, height = 8, units = "in", res = 300)
+
+DimPlot_scCustom(scTSCluster101,
                  reduction = "umap",
                  label.box = TRUE,
                  label.size = 4,
                  repel = TRUE)
+
+dev.off()
+
+tiff("TS_cluster_7_presentation.tiff", width = 10, height = 8, units = "in", res = 300)
+
+UMAPPlot(scTSCluster101) + NoLegend()
 
 dev.off()
 ```
@@ -439,35 +451,27 @@ dev.off()
 ## 2.6.2 Sankey diagram
 
 ```{r}
-metadata <- tsCluster171@meta.data %>%
-  select(tissue_in_publication, cluster17)
+library(ggsankey)
 
-tsOrgan171 <- as.data.frame(table(metadata)) %>%
-  filter(Freq >= 50)
+tissueData <- scTSClusterFilterGenes101@meta.data %>%
+  select(tissue_in_publication, cluster10) %>%
+  rownames_to_column("cellID") %>%
+  select(-cellID) %>%
+  make_long(cluster10, tissue_in_publication)
 
-nodes <- data.frame(
-  name = c(as.character(tsOrgan171$cluster17), 
-           as.character(tsOrgan171$tissue_in_publication)) %>% 
-              unique()
-)
+p <- ggplot(tissueData, aes(x = x, next_x = next_x, node = node, next_node = next_node, fill = factor(node), label = node)) +
+  geom_sankey(flow.alpha = 0.5) +
+  geom_sankey_label(color = "black") +
+  labs(x = "") +
+  theme_sankey() +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = sample(as.vector(paletteer::paletteer_d("colorBlindness::SteppedSequential5Steps"))))
 
-tsOrgan171$IDsource <- match(tsOrgan171$cluster17, nodes$name)-1
-tsOrgan171$IDtarget <- match(tsOrgan171$tissue_in_publication, nodes$name)-1
-
-p <- networkD3::sankeyNetwork(
-  Links = tsOrgan171,
-  Nodes = nodes,
-  Source = "IDsource",
-  Target = "IDtarget",
-  Value = "Freq",
-  NodeID = "name",
-  sinksRight = FALSE,
-  fontSize = 12
-)
+# svg("plots_thesis/rTS_bAEplaque1_c10_sankey.svg", width = 8, height = 8)
 
 print(p)
 
-htmlwidgets::saveWidget(p, file="output/plots/sankey_html/tsCluster171_presentation.html")
+# dev.off()
 ```
 
 # 2.7 Session info

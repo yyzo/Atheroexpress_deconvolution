@@ -64,8 +64,8 @@ done
 source functions/functions_bash.sh
 set -e
 
-patternRef="rTS_bAEplaqueCombine_c10_v1"
-patternBulk="rTS_bAEplaqueCombine"
+patternRef="rTS_bAEccfRNACombine_c17_v3"
+patternBulk="rTS_bAEccfRNACombine_c17_v3"
 
 dirRef="data/processed_data/scaden_sc_rna_ref_files/${patternRef}"
 dirBulk="data/processed_data/scaden_bulk_rna_files/${patternBulk}"
@@ -76,8 +76,8 @@ dirPrediction="output/scaden_predictions/${patternRef}"
 createDir "${dirPrediction}"
 
 # Setting both start and end to the same number will only run the loop once
-start=3
-end=4
+start=1
+end=10
 
 for i in $(seq $start $end)
 do

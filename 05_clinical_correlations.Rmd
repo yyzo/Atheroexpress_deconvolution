@@ -24,15 +24,16 @@ library(tidyverse)
 library(broom)
 library(gtools) # Adds significance stars to tidy()
 
-library(car) # Calculate VIF
+library(car) # vif
 library(rstatix)
 library(survival) # coxzph
 library(ranger)
 library(performance) # Hosmer-Lemeshow goodness-of-fit test
 library(mice) # Impute missing data
+library(haven)
 
-library(survminer) # ggcoxzph
 library(patchwork)
+library(Polychrome)
 # extrafont::font_import(pattern = "Helvetica")
 extrafont::loadfonts(quiet = TRUE)
 
@@ -59,9 +60,9 @@ patientData$Symptoms.2g <- factor(patientData$Symptoms.2g, levels = c(0, 1), lab
 # Add thrombus.bin column
 patientData$thrombus.bin <- case_when(patientData$thrombus == 0 | patientData$thrombus == 1 ~ 0,
                                       patientData$thrombus == 2 | patientData$thrombus == 3 ~ 1,
-                                      patientData$thrombus == -888 ~ -888)
+                                      patientData$thrombus == -888 ~ NA)
 
-patientData$thrombus.bin <- factor(patientData$thrombus.bin, levels = c(0, 1, -888), labels = c("no/minor", "moderate/heavy", "not judgeable"))
+patientData$thrombus.bin <- factor(patientData$thrombus.bin, levels = c(0, 1), labels = c("no/minor", "moderate/heavy"))
 
 # Add hsCRP.bin column
 patientData$hsCRP.bin <- case_when(patientData$hsCRP_plasma < 2 ~ 0,
@@ -69,15 +70,38 @@ patientData$hsCRP.bin <- case_when(patientData$hsCRP_plasma < 2 ~ 0,
                                    patientData$hsCRP_plasma >= 40 ~ NA)
 
 patientData$hsCRP.bin <- factor(patientData$hsCRP.bin, levels = c(0, 1), labels = c("low", "high"))
+
+# Add collagen.bin column
+patientData$collagen.bin <- case_when(patientData$collagen == 0 | patientData$collagen == 1 ~ 0,
+                                      patientData$collagen == 2 | patientData$collagen == 3 ~ 1,
+                                      patientData$collagen == -888 | patientData$collagen == -999 ~ NA)
+
+patientData$collagen.bin <- factor(patientData$collagen.bin, levels = c(0, 1), labels = c("no/minor", "moderate/heavy"))
+
+#Add plaquephenotype.bin column
+patientData$plaquephenotype.bin <- case_when(patientData$plaquephenotype == 1 ~ 0,
+                                             patientData$plaquephenotype == 2 ~ NA,
+                                             patientData$plaquephenotype == 3 ~ 1)
+
+patientData$plaquephenotype.bin <- factor(patientData$plaquephenotype.bin, levels = c(0, 1), labels = c("fibrous", "atheromatous"))
+
+# Columns to turn into factors
+toFactor <- c("Gender", "DM.composite", "Hypertension.composite", "SmokerCurrent", "PAOD", "CAD_history", "Med.statin.derived", "Calc.bin", "Stroke_history", "Macrophages.bin", "SMC.bin", "IPH.bin")
+
+patientData <- patientData %>%
+  mutate_at(toFactor, as.factor)
+
+# Turn EP_major into numeric
+patientData$EP_major <- as.numeric(patientData$EP_major)
 ```
 
 ## 5.3.2 (Average) predicted cellular proportions
 
 ```{r}
 proportionsAsFractions <- TRUE # MODIFY HERE; proportions as fractions are the default
-zTransform <- TRUE # MODIFY HERE; set to FALSE for Section 5.5.1
+zTransform <- TRUE # MODIFY HERE; set to FALSE for Section 5.5.1 and 5.5.3
 
-pattern <- "rTS_bAEccfRNACombine_c17_v1" # MODIFY HERE
+pattern <- "rTS_bGTExHeart_c17_v1" # MODIFY HERE
 
 pred <- readRDS(paste0("output/export_files/rds_files/scaden_wide_avg_prop_", pattern, ".rds")) %>% # MODIFY HERE; as wide format
   rename_with(.fn = ~ str_replace_all(., c(" " = "_", "/" = "_")),
@@ -100,7 +124,6 @@ if(zTransform) {
 
 predModLong <- predModWide %>%
   pivot_longer(cols = -patient, names_to = "cellType", values_to = "proportion")
-
 
 # Add patient characteristics
 predSympWide <- predModWide %>%
@@ -126,21 +149,33 @@ if(str_detect(pattern, "AEccfRNACombine")) {
   predSympWide$dateok.bin <- case_when(predSympWide$dateok <= ymd("2009-01-22") ~ 0, 
                                        predSympWide$dateok > ymd("2009-01-22") ~ 1)
 
-  predSympWide$dateok.bin <- factor(predSympWide$dateok.bin, levels = c(0, 1), labels = c("before/on 2009-01-22", "after 2009-01-22"))
+  predSympWide$dateok.bin <- factor(predSympWide$dateok.bin, levels = c(0, 1)) # 0 = before/on 2009-01-22; 1 = after 2009/01/22
 }
-```
 
-```{r}
+# Add additional columns for bAEplaqueCombine
+if(str_detect(pattern, "AEplaqueCombine")) {
+  cat("Bulk RNA-seq data of AEplaqueCombine detected...")
+  
+  # Add batch ID
+  batchesPlaque <- readRDS("data/metadata/AEplaque_batch_patientID.rds")
+  
+  predSympWide <- predSympWide %>%
+    left_join(batchesPlaque, by = "patient")
+  
+  predSympLong <- predSympLong %>%
+    left_join(batchesPlaque, by = "patient")
+}
+
 rm(predModLong, predModWide)
 ```
 
 ### 5.3.2.1 Impute missing values
 
 ```{r}
-# sum(is.na(predSympWide$DM.composite))
+sum(is.na(predSympWide$MMP2))
 
-contCol <- c("BMI", "GFR_MDRD") # MODIFY HERE
-binCol <- c("SmokerCurrent", "PAOD", "CAD_history", "Med.statin.derived", "Med.Statin.LLD", "CI_history", "Calc.bin") # For Symptoms.2g and MACE
+contCol <- c("BMI", "GFR_MDRD", "FABP4", "VEGFA_plasma") # MODIFY HERE
+binCol <- c("SmokerCurrent", "PAOD", "CAD_history", "Med.statin.derived", "Calc.bin", "Macrophages.bin", "SMC.bin", "thrombus.bin", "IPH.bin", "collagen.bin") # MODIFY HERE
 
 # Prepare columns for imputation
 contColToImpute <- predSympWide %>%
@@ -148,8 +183,7 @@ contColToImpute <- predSympWide %>%
   mutate(across(all_of(contCol), as.numeric))
 
 groupColToImpute <- predSympWide %>%
-  select(patient, all_of(binCol)) %>%
-  mutate(across(all_of(binCol), as.factor))
+  select(patient, all_of(binCol))
 
 toImpute <- left_join(contColToImpute, groupColToImpute, by = "patient")
 
@@ -176,7 +210,7 @@ for(col in colnames(toImpute)[-1]) {
 ### 5.3.2.2 Add gene counts from bulk RNA-seq data
 
 ```{r}
-bulkData <- read.table(file = "data/processed_data/scaden_bulk_rna_files/rTS_bAEccfRNACombine_bulk_data.txt", check.names = FALSE) # MODIFY HERE
+bulkData <- read.table(file = "data/processed_data/scaden_bulk_rna_files/rAEplaque_bAEplaque1_bulk_data.txt", check.names = FALSE) # MODIFY HERE
 
 geneMarkersList <- readRDS(file = "output/export_files/rds_files/geneMarkersList18.rds") # MODIFY HERE; exported from 04_analysis_cellular_deconvolution.Rmd, Section 4.4.2
 
@@ -275,8 +309,8 @@ for(symp in names(predSympLongFilter)) {
 
 ```{r}
 # Variables to be used in the fitting of the GLM
-responseVar <- "Calc.bin" # MODIFY HERE
-covariates <- c("batch") # MODIFY HERE; for interaction terms, add together in one string ("var1 * var2")
+responseVar <- "plaquephenotype.bin" # MODIFY HERE
+covariates <- c("Age", "Gender", "BMI") # MODIFY HERE; for interaction terms, add together in one string ("var1 * var2")
 glmFamily <- "binomial" # MODIFY HERE; dependent on responseVar
 
 useProportion <- TRUE # MODIFY HERE; use estimated cellular proportions (TRUE) or bulk RNA-seq gene counts (FALSE) for GLM
@@ -359,7 +393,7 @@ if (glmFamily == "gaussian") {
   if (length(covariates) > 0) {
     # Check for multicollinearity among covariates
     vifRes <- lapply(resGLM, function(r) { 
-      vif(r) # VIF > 5 is problematic
+      vif(r) # VIF > 5 is problematic # NOTE TO SELF: gvif() use for glm??
     })
   }
   
@@ -384,7 +418,7 @@ timeVar <- "EP_major_time" # MODIFY HERE
 
 statusVar <- "EP_major" # MODIFY HERE
 
-covariates <- c("batch", "DM.composite", "Hypertension.composite", "SmokerCurrent") # MODIFY HERE
+covariates <- c("batch", "BMI", "Age", "Gender") # MODIFY HERE
 
 useProportion <- TRUE # MODIFY HERE; use estimated cellular proportions (TRUE) or bulk RNA-seq gene counts (FALSE) for Cox regression
 
@@ -444,84 +478,17 @@ tblAllPerfCox <- do.call(rbind, performanceResCox) %>%
 ### 5.4.3.2 Validate Cox regression model
 
 ```{r}
-# Test covariates for multicollinearity
-dfCor <- predSympWide %>%
-  select(covariates) %>%
-  na.omit()
+# Check for multicollinearity among covariates
+dfToCor <- predSympWideImputedGene %>%
+  mutate_at(covariates, as.numeric) %>%
+  select(all_of(covariates))
+  
+ggcorrplot::ggcorrplot(cor(dfToCor), hc.order = TRUE, type = "lower", lab = TRUE)
 
-ggcorrplot::ggcorrplot(cor(dfCor), hc.order = TRUE, type = "lower", lab = TRUE)
+# Test Cox proportional hazards assumption
+testCox <- lapply(resCox, cox.zph)
 
-
-```
-
-```{r}
-# Check for multicollinearity in covariates
-dfCor <- predSympWide %>%
-  select(covariates) %>%
-  na.omit()
-
-matCor <- cor(dfCor)
-ggcorrplot(matCor, hc.order = TRUE, type = "lower", lab = TRUE)
-
-# Test Cox proportional hazards assumptions
-testCoxAssump <- lapply(resCox, function(r) if (!is.null(r)) cox.zph(r) else NULL)
-pTestCoxAssump <- lapply(testCoxAssump, function(t) if (!is.null(t)) ggcoxzph(t) else NULL)
-invisible(lapply(pTestCoxAssump, print))
-
-# Plot diagnostics
-plotCoxDiagnostics <- function(r, type) {
-  if (!is.null(r)) {
-    ggcoxdiagnostics(r, type = type) + labs(title = deparse(formula(r)))
-  }
-}
-
-lapply(resCox, function(r) plotCoxDiagnostics(r, type = "martingale"))
-lapply(resCox, function(r) plotCoxDiagnostics(r, type = "deviance"))
-lapply(resCox, function(r) plotCoxDiagnostics(r, type = "dfbeta"))
-lapply(resCox, function(r) ggcoxdiagnostics(r, type = "scaledsch"))
-
-# Load additional libraries
-library(survcomp)
-library(survminer)
-
-# Model fit assessment
-c_index <- sapply(resCox, function(model) {
-  if (!is.null(model)) {
-    survConcordance(Surv(predSympWide[[timeVar]], predSympWide[[statusVar]]) ~ predict(model))$concordance
-  }
-})
-
-# Calibration plots
-# (Requires external libraries or custom implementation for detailed calibration plots)
-
-# Kaplan-Meier Curves
-predSympWide$predicted_risk <- sapply(resCox, function(model) if (!is.null(model)) predict(model, type = "risk") else NA)
-surv_fit <- survfit(Surv(predSympWide[[timeVar]], predSympWide[[statusVar]]) ~ predSympWide$predicted_risk, data = predSympWide)
-ggsurvplot(surv_fit)
-
-# Interaction terms (example)
-interaction_formula <- as.formula(sprintf("Surv(%s, %s) ~ %s * %s + %s", timeVar, statusVar, cellTypes[1], covariates[1], paste(covariates[-1], collapse = " + ")))
-interaction_model <- coxph(interaction_formula, data = predSympWide)
-summary(interaction_model)
-
-# Residual and influence diagnostics
-lapply(resCox, function(r) {
-  if (!is.null(r)) {
-    list(
-      martingale = ggcoxdiagnostics(r, type = "martingale"),
-      deviance = ggcoxdiagnostics(r, type = "deviance"),
-      dfbeta = ggcoxdiagnostics(r, type = "dfbeta")
-    )
-  }
-})
-```
-
-```{r}
-testCoxAssump <- lapply(resCox, function(r) cox.zph(r))
-print(testCoxAssump)
-
-pTestCoxAssump <- lapply(testCoxAssump, function(t) ggcoxzph(t))
-invisible(lapply(pTestCoxAssump, print))
+print(testCox)
 ```
 
 # 5.5 Graphs
@@ -648,9 +615,7 @@ plotPAdj <- FALSE # MODIFY HERE; use the adjusted p.values (TRUE) or non-adjuste
 colPBin <- ifelse(plotPAdj, "sig.adj.bin", "sig.bin")
 
 glmPlotTitle <- ifelse(plotPAdj, paste(gsub("B_cell", "cellType", paste0(deparse(formulasGLM[[1]]))), "(adj)"), gsub("B_cell", "cellType", paste0(deparse(formulasGLM[[1]]))))
-```
 
-```{r}
 pGLM <- ggplot(plotAllResGLM, aes(x = !!rlang::sym(glmType), y = estimate)) +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high, color = !!rlang::sym(colPBin)), 
                 width = NA, linewidth = 0.4, show.legend = TRUE) +
@@ -658,8 +623,7 @@ pGLM <- ggplot(plotAllResGLM, aes(x = !!rlang::sym(glmType), y = estimate)) +
              size = 2, stroke = NA, show.legend = TRUE) +
   geom_hline(yintercept = 0, linetype = "dotted", linewidth = 0.2) +
   coord_flip() +
-  labs(title = glmPlotTitle,
-       x = "",
+  labs(x = "",
        y = expression(beta ~ "coefficient"),
        color = expression(bold(significant))) +
   scale_color_manual(values = c("black", "#4A97CA"), drop = FALSE) +
@@ -688,19 +652,24 @@ pGLM <- ggplot(plotAllResGLM, aes(x = !!rlang::sym(glmType), y = estimate)) +
 
 basePath <- ifelse(plotPAdj, "output/plots/glm_forest_plot/adjusted/", "output/plots/glm_forest_plot/")
 
-tiff(paste0(basePath, "scaden_", pattern, "_glm_", responseVar, "_", paste0(covariates, collapse = "_"),".tiff", collapse = ""), 
-     width = 10, height = 10, unit = "cm", res = 300)
+# tiff(paste0(basePath, "scaden_", pattern, "_glm_", responseVar, "_", paste0(covariates, collapse = "_"),".svg", collapse = ""), 
+#      width = 7, height = 10, unit = "cm", res = 300)
+# 
+# print(pGLM)
+# 
+# dev.off()
 
 print(pGLM)
 
-dev.off()
+ggsave("test.svg", 
+     width = 12, height = 10, units = "cm", dpi = 300)
+
 ```
 
 ### 5.5.2.2 Cox regression model
 
 ```{r}
-plotAllResCox <- tblAllResCox %>%
-  filter(!!rlang::sym(coxType) == term) %>%
+plotAllResCox <- tblSubsetResCox %>%
   mutate(HR_CI = sprintf("%.2f [%.2f - %.2f]", HR, conf.low, conf.high),
          sig.bin = ifelse(sig != " " & sig != ".", "yes", "no"),
          sig.adj.bin = ifelse(sig.adj != " " & sig.adj != ".", "yes", "no"))
@@ -762,8 +731,7 @@ pForest <- ggplot(plotAllResCox, aes(x = !!rlang::sym(coxType), y = HR)) +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high, color = !!rlang::sym(colPBin)), width = NA, linewidth = 0.3) +
   geom_point(aes(color = !!rlang::sym(colPBin), shape = !!rlang::sym(colPBin)), size = 1, stroke = 0.8) +
   coord_flip() +
-  labs(title = baseFormulaCox,
-       x = "",
+  labs(x = "",
        y = expression(bold("Hazard Ratio")),
        color = expression(bold(significant))) +
   scale_color_manual(values = c("black", "#4A97CA")) + # Colors for the outlines
@@ -813,8 +781,43 @@ addPath <- paste0(basePath,
                   ifelse(plotPAdj, "adjusted/", "non_adjusted/"),
                   ifelse(useProportion, "cell_type_proportion/", "gene_marker_count/"))
 
-ggsave(paste0(addPath, "scaden_", pattern, "_cox_", paste0(covariates, collapse = "_"), ".tiff", collapse = ""), 
+ggsave(paste0(addPath, "scaden_", pattern, "_", paste0(covariates, collapse = "_"), ".svg", collapse = ""), 
      width = 10, height = 10, units = "cm", dpi = 300)
+```
+
+## 5.5.3 Stacked bar plot
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+
+# Check the unique levels of cellType
+unique_levels <- unique(predSympLong$cellType)  # Check what levels are in cellType
+
+# Create a color vector using palette.colors (ensure it matches the number of levels in cellType)
+p36 <- palette.colors(n = length(unique_levels), palette = "Polychrome 36")
+
+# Name the colors according to the levels of cellType
+names(p36) <- unique_levels
+
+# Create the plot with the Polychrome 36 palette and vertical line separating the batches
+ggplot(predSympLong, aes(fill = cellType, y = proportion, x = reorder(patient, dateok))) + 
+    geom_bar(position = "fill", stat = "identity") +
+    scale_fill_manual(values = p36) +  # Use the named Polychrome 36 palette
+    geom_vline(xintercept = batch_split - 0.5, linetype = "dashed", color = "black", size = 1) +  # Add vertical line between batches
+    theme_minimal()
+```
+
+```{r}
+unique_levels <- unique(predSympLong$cellType)
+
+pColors <- palette.colors(n = length(unique_levels), palette = "Tableau 10")
+
+names(pColors) <- unique_levels
+
+ggplot(predSympLong, aes(fill = cellType, y = proportion, x = reorder(patient, as.numeric(batch)))) + 
+  geom_bar(position = "fill", stat = "identity") +
+  scale_fill_manual(values = pColors)
 ```
 
 # 5.6 Session info
