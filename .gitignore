@@ -6,6 +6,8 @@
 !*.R
 !*.Rmd
 !*.sh
+!*.png
+!*.xlsx
 !*.gitignore
 
 # Unignore directories
