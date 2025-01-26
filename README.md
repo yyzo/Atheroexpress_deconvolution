@@ -14,7 +14,7 @@ This project primarily aimed to:
   <img src="https://github.com/yyzo/Atheroexpress_deconvolution/blob/main/docs/project_workflow_github_readme.png" width="500">
 </picture>
 
-The Tabula Sapiens was chosen for the deconvolution of bulk circulating cfRNA<sup>3</sup>. Its use as a reference was validated by (A) deconvoluting organ-specific bulk RNA-seq datasets from the Genotype-Tissue Expression Project<sup>4</sup>. Furthermore, (B) its use as a reference for atherosclerotic plaque deconvolution was compared with that of a tissue-matched reference. After the validation, (C) the deconvolution of circulating cfRNA was performed and outcomes were analyzed in relation to atherosclerosis symptom severity and risk of major adverse cardiovascular events.
+The Tabula Sapiens was chosen for the deconvolution of bulk circulating cfRNA<sup>3</sup>. Its use as a reference was validated by (A) comparing its performance for atherosclerotic plaque deconvolution with that of a tissue-matched reference. Furthermore, in order to evaluate a baseline performance of the Tabula Sapiens, (B) organ-specific bulk RNA-seq datasets from the Genotype-Tissue Expression Project<sup>4</sup> were deconvoluted. After the validation, (C) the deconvolution of circulating cfRNA was performed and outcomes were analyzed in relation to atherosclerosis symptom severity and risk of major adverse cardiovascular events.
 
 For additional information regarding the data collection, please refer to the corresponding [file](https://github.com/yyzo/Atheroexpress_deconvolution/blob/main/docs/data_collection_metadata.xlsx).
 
