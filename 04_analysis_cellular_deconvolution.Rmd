@@ -29,7 +29,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(tidyverse)
-library(BayesPrism)
 library(edgeR)
 
 library(ComplexHeatmap)
